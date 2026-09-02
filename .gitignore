@@ -1,3 +1,9 @@
 /pc-state-mqtt
+/pc-state-mqtt-watch
+/coverage.out
+/config.local.toml
+
+/pc-state-mqtt
+/pc-state-mqtt-watch
 /coverage.out
 /config.local.toml

@@ -7,6 +7,7 @@
 - Run collectors concurrently with independent timeouts, deterministic output, and partial-failure diagnostics.
 - Include enabled CPU and memory metrics in broker-free one-shot snapshots.
 - Add a localhost-only Mosquitto Docker Compose stack with a quiet process health check and Makefile targets for MQTT integration testing.
+- Add the `pc-state-mqtt-watch` companion client with reconnecting topic subscriptions, automatic JSON formatting, TLS/auth configuration, and default-on terminal colors.
 
 ## 0.1.0 - 2026-09-03
 

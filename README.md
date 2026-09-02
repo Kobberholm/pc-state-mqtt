@@ -18,23 +18,23 @@ make check
 make build
 ```
 
-The binary is written to `./pc-state-mqtt`. `make check` formats the code, runs `go vet`, executes all unit tests, and builds the executable.
+The binaries are written to `./pc-state-mqtt` and `./pc-state-mqtt-watch`. `make check` formats the code, runs `go vet`, executes all unit tests, and builds both executables.
 
 ### Local MQTT test broker
 
 Start the localhost-only Mosquitto test broker with Docker Compose:
 
 ```sh
-make mqtt-up
+make mqtt/up
 ```
 
 The broker listens on `tcp://localhost:1883`, permits anonymous connections, keeps no persistent state, and is intended only for local development. Override the host port when 1883 is occupied:
 
 ```sh
-MQTT_TEST_PORT=1884 make mqtt-up
+MQTT_TEST_PORT=1884 make mqtt/up
 ```
 
-View broker logs with `make mqtt-logs` and remove the stack with `make mqtt-down`. The Compose project uses `compose.test.yaml` and the test-only configuration in `test/mosquitto/mosquitto.conf`.
+View broker logs with `make mqtt/logs` and remove the stack with `make mqtt/down`. The Compose project uses `compose.test.yaml` and the test-only configuration in `test/mosquitto/mosquitto.conf`.
 
 ## Usage
 
@@ -60,6 +60,30 @@ Use an explicit configuration and override selected values:
 ```
 
 Run `./pc-state-mqtt --help` for all CLI options.
+
+### Watch MQTT messages
+
+`pc-state-mqtt-watch` connects to the configured broker and subscribes to all telemetry for the configured host:
+
+```sh
+./pc-state-mqtt-watch
+```
+
+The default topic filter is `pc-state/<hostname>/#`. Each received topic and payload is printed immediately. Valid JSON payloads are detected and indented automatically; other payloads are printed unchanged. Topic and payload colors are enabled by default and can be disabled explicitly:
+
+```sh
+./pc-state-mqtt-watch --color=false
+```
+
+Subscribe to another host, a broader wildcard, or a specific subtree with `--host-id` or `--topic`:
+
+```sh
+./pc-state-mqtt-watch --host-id workstation
+./pc-state-mqtt-watch --topic 'pc-state/+/#'
+./pc-state-mqtt-watch --topic 'pc-state/workstation/cpu/#' --color=false
+```
+
+The watcher uses the same configuration file, broker URL, TLS files, username, password, topic root, host ID, and `PC_STATE_MQTT_*` environment variables as the publisher. Its default client ID adds `-watch` to the configured publisher client ID; override it with `--client-id` when running multiple watchers. `make watch` starts it with defaults.
 
 ## Configuration
 
