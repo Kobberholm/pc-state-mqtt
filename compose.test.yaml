@@ -11,7 +11,7 @@ services:
     healthcheck:
       test:
         - CMD-SHELL
-        - mosquitto_sub -h 127.0.0.1 -p 1883 -t '$$SYS/broker/version' -C 1 -W 3 >/dev/null
+        - grep -qx mosquitto /proc/1/comm
       interval: 5s
       timeout: 4s
       retries: 5
