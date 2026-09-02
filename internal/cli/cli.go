@@ -11,9 +11,11 @@ import (
 )
 
 type Options struct {
-	Config  config.Config
-	Once    bool
-	Version bool
+	Config     config.Config
+	ConfigPath string
+	Once       bool
+	TUI        bool
+	Version    bool
 }
 
 func Parse(args []string, hostname string, output io.Writer) (Options, error) {
@@ -37,7 +39,9 @@ func Parse(args []string, hostname string, output io.Writer) (Options, error) {
 	flags.SetOutput(output)
 	var options Options
 	options.Config = configuration
+	options.ConfigPath = configPath
 	flags.BoolVar(&options.Once, "once", false, "collect once and print JSON without connecting to MQTT")
+	flags.BoolVar(&options.TUI, "tui", false, "open the interactive feature and monitoring interface")
 	flags.BoolVar(&options.Version, "version", false, "print the application version")
 	flags.String("config", configPath, "path to TOML configuration")
 	flags.StringVar(&options.Config.HostID, "host-id", configuration.HostID, "host identifier used in MQTT topics")
@@ -53,6 +57,9 @@ func Parse(args []string, hostname string, output io.Writer) (Options, error) {
 	}
 	if flags.NArg() != 0 {
 		return Options{}, fmt.Errorf("unexpected arguments: %s", strings.Join(flags.Args(), " "))
+	}
+	if options.Once && options.TUI {
+		return Options{}, fmt.Errorf("--once and --tui cannot be used together")
 	}
 	if err := options.Config.Validate(); err != nil {
 		return Options{}, err

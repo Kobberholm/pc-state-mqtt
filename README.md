@@ -61,6 +61,28 @@ Use an explicit configuration and override selected values:
 
 Run `./pc-state-mqtt --help` for all CLI options.
 
+### Interactive TUI
+
+Open the feature settings and live monitoring interface with:
+
+```sh
+./pc-state-mqtt --tui
+# or
+make tui
+```
+
+The settings view exposes every collector configured under `[collectors]`. CPU and memory are marked `available`; collectors scheduled for later implementation are marked `planned` and do not fabricate monitoring data.
+
+- `Up`/`Down` or `j`/`k`: select a feature.
+- `Space` or `Enter`: enable or disable the selected feature for this session.
+- `s`: atomically save the collector settings to the active TOML configuration with mode `0600`; other settings and credentials are preserved.
+- `m`: open the built-in live monitor using the current feature selection.
+- `q`: quit.
+
+The monitoring view refreshes at `sample_interval`, shows collector diagnostics, and supports scrolling with `Up`/`Down`, `j`/`k`, `Page Up`, and `Page Down`. Press `r` to refresh immediately or `Esc`/`m` to return to feature settings.
+
+`--tui` uses the same configuration, environment variables, and CLI overrides as one-shot and daemon modes. It cannot be combined with `--once`.
+
 ### Watch MQTT messages
 
 `pc-state-mqtt-watch` connects to the configured broker and subscribes to all telemetry for the configured host:

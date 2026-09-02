@@ -34,3 +34,23 @@ func TestParseRejectsUnexpectedArguments(t *testing.T) {
 		t.Fatal("expected unexpected argument error")
 	}
 }
+
+func TestParseTUIUsesResolvedConfigPath(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	if err := os.WriteFile(path, []byte("host_id = \"tui-host\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	options, err := Parse([]string{"--config", path, "--tui"}, "host", io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !options.TUI || options.ConfigPath != path {
+		t.Fatalf("options = %+v", options)
+	}
+}
+
+func TestParseRejectsTUIWithOnce(t *testing.T) {
+	if _, err := Parse([]string{"--tui", "--once"}, "host", io.Discard); err == nil {
+		t.Fatal("expected conflicting mode error")
+	}
+}

@@ -85,3 +85,46 @@ func TestValidate(t *testing.T) {
 		})
 	}
 }
+
+func TestSaveWritesSecureReloadableConfig(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "nested", "config.toml")
+	configuration := Defaults("saved-host")
+	configuration.Collectors.GPU = false
+	if err := Save(path, configuration); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if permissions := info.Mode().Perm(); permissions != 0o600 {
+		t.Fatalf("permissions = %o, want 600", permissions)
+	}
+	loaded, err := Load(path, true, "other-host", func(string) (string, bool) { return "", false })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.HostID != "saved-host" || loaded.Collectors.GPU {
+		t.Fatalf("loaded config = %+v", loaded)
+	}
+}
+
+func TestSaveCollectorsPreservesOtherConfiguration(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	contents := []byte("host_id = \"saved-host\"\n[mqtt]\npassword = \"secret\"\n[collectors]\ncpu = true\n")
+	if err := os.WriteFile(path, contents, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	collectors := Defaults("host").Collectors
+	collectors.CPU = false
+	if err := SaveCollectors(path, collectors); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := Load(path, true, "other-host", func(string) (string, bool) { return "", false })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.HostID != "saved-host" || loaded.MQTT.Password != "secret" || loaded.Collectors.CPU {
+		t.Fatalf("loaded config = %+v", loaded)
+	}
+}

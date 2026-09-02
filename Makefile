@@ -2,7 +2,7 @@ PREFIX ?= /usr/local
 COMPOSE ?= docker compose
 MQTT_TEST_COMPOSE_FILE ?= compose.test.yaml
 
-.PHONY: build check fmt install mqtt/down mqtt/logs mqtt/up run test test-integration vet watch
+.PHONY: build check fmt install mqtt/down mqtt/logs mqtt/up run test test-integration tui vet watch
 
 build:
 	go build -o pc-state-mqtt ./cmd/pc-state-mqtt
@@ -36,6 +36,9 @@ test:
 
 test-integration:
 	go test -tags=integration ./...
+
+tui:
+	go run ./cmd/pc-state-mqtt --tui
 
 vet:
 	go vet ./...

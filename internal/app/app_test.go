@@ -26,6 +26,16 @@ func TestRunVersion(t *testing.T) {
 	}
 }
 
+func TestRunHelpExitsSuccessfully(t *testing.T) {
+	var stderr bytes.Buffer
+	if exitCode := Run(context.Background(), []string{"--help"}, &bytes.Buffer{}, &stderr); exitCode != 0 {
+		t.Fatalf("exit code = %d, stderr = %q", exitCode, stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "-tui") {
+		t.Fatalf("help does not describe TUI option: %q", stderr.String())
+	}
+}
+
 func TestRunOnceWritesSnapshot(t *testing.T) {
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer

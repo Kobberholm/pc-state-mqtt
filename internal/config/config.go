@@ -121,6 +121,70 @@ func Load(path string, required bool, hostname string, lookup LookupEnv) (Config
 	return configuration, nil
 }
 
+func Save(path string, configuration Config) error {
+	if path == "" {
+		return fmt.Errorf("config path must not be empty")
+	}
+	if err := configuration.Validate(); err != nil {
+		return err
+	}
+	contents, err := toml.Marshal(configuration)
+	if err != nil {
+		return fmt.Errorf("encode config: %w", err)
+	}
+	return writeFile(path, contents)
+}
+
+func SaveCollectors(path string, collectors Collectors) error {
+	if path == "" {
+		return fmt.Errorf("config path must not be empty")
+	}
+	document := make(map[string]any)
+	contents, err := os.ReadFile(path)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("read config %q: %w", path, err)
+	}
+	if err == nil {
+		if err := toml.Unmarshal(contents, &document); err != nil {
+			return fmt.Errorf("parse config %q: %w", path, err)
+		}
+	}
+	document["collectors"] = collectors
+	contents, err = toml.Marshal(document)
+	if err != nil {
+		return fmt.Errorf("encode collector settings: %w", err)
+	}
+	return writeFile(path, contents)
+}
+
+func writeFile(path string, contents []byte) error {
+	directory := filepath.Dir(path)
+	if err := os.MkdirAll(directory, 0o700); err != nil {
+		return fmt.Errorf("create config directory: %w", err)
+	}
+	temporary, err := os.CreateTemp(directory, ".config-*.toml")
+	if err != nil {
+		return fmt.Errorf("create temporary config: %w", err)
+	}
+	temporaryPath := temporary.Name()
+	defer os.Remove(temporaryPath)
+	if err := temporary.Chmod(0o600); err != nil {
+		temporary.Close()
+		return fmt.Errorf("secure temporary config: %w", err)
+	}
+	if _, err := temporary.Write(contents); err != nil {
+		temporary.Close()
+		return fmt.Errorf("write temporary config: %w", err)
+	}
+	if err := temporary.Close(); err != nil {
+		return fmt.Errorf("close temporary config: %w", err)
+	}
+	if err := os.Rename(temporaryPath, path); err != nil {
+		return fmt.Errorf("replace config: %w", err)
+	}
+	return nil
+}
+
 func (configuration *Config) applyEnvironment(lookup LookupEnv) error {
 	stringsByKey := map[string]*string{
 		"PC_STATE_MQTT_HOST_ID":       &configuration.HostID,
