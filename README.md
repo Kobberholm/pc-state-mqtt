@@ -2,7 +2,7 @@
 
 `pc-state-mqtt` is a Linux service for collecting PC hardware and runtime state and publishing it to hierarchical MQTT topics. Future releases will accept a deliberately constrained command protocol from the broker.
 
-Version 0.1.0 establishes the telemetry schema, layered configuration, CLI, and broker-free one-shot output. Hardware collectors and live MQTT publishing are implemented in the following planned feature releases; daemon mode currently exits with an explicit not-implemented error.
+Version 0.1.0 establishes the telemetry schema, layered configuration, CLI, and broker-free one-shot output. The current development branch adds live CPU and memory collection to one-shot snapshots. Remaining hardware collectors and MQTT publishing are implemented in the following planned feature releases; daemon mode currently exits with an explicit not-implemented error.
 
 ## Requirements
 
@@ -86,8 +86,8 @@ The schema version is `1.0`. Identity, metadata, and availability topics will be
 
 ## Planned collectors
 
-- CPU utilization, identity, online state, and per-core clocks.
-- Memory, cache, and swap usage.
+- CPU utilization and per-core clocks are available in development; CPU identity and online state remain planned.
+- Memory, cache, and swap usage are available in development.
 - Thermal, fan, voltage, and power sensors from hwmon and thermal zones.
 - Mounted filesystem usage, block-device identity, and disk I/O counters.
 - Network interfaces, addresses, link state, and traffic counters.

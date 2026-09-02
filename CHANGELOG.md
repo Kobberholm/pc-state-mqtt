@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- Collect aggregate and per-logical-CPU utilization from procfs with optional per-core clock data from sysfs.
+- Collect memory, cache, buffers, and swap values from procfs with byte-normalized output.
+- Run collectors concurrently with independent timeouts, deterministic output, and partial-failure diagnostics.
+- Include enabled CPU and memory metrics in broker-free one-shot snapshots.
+
 ## 0.1.0 - 2026-09-03
 
 - Establish the Go module, package boundaries, and feature-branch development plan.

@@ -4,9 +4,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
+	"pc-state-mqtt/internal/config"
 	"pc-state-mqtt/internal/version"
 	"pc-state-mqtt/pkg/telemetry"
 )
@@ -42,5 +46,30 @@ func TestRunCancelledDaemonExitsCleanly(t *testing.T) {
 	cancel()
 	if exitCode := Run(context, nil, &bytes.Buffer{}, &bytes.Buffer{}); exitCode != 0 {
 		t.Fatalf("exit code = %d", exitCode)
+	}
+}
+
+func TestWriteSnapshotKeepsSuccessfulCollectorData(t *testing.T) {
+	procRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(procRoot, "meminfo"), []byte("MemTotal: 1000 kB\nMemAvailable: 400 kB\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	configuration := config.Defaults("test-host")
+	configuration.ProcRoot = procRoot
+	configuration.Collectors.CPU = true
+	configuration.Collectors.Memory = true
+	var output bytes.Buffer
+	if err := writeSnapshot(context.Background(), &output, configuration, time.Unix(1, 0)); err != nil {
+		t.Fatal(err)
+	}
+	var snapshot telemetry.Snapshot
+	if err := json.Unmarshal(output.Bytes(), &snapshot); err != nil {
+		t.Fatal(err)
+	}
+	if _, exists := snapshot.Metrics["memory/used_bytes"]; !exists {
+		t.Fatalf("metrics = %#v", snapshot.Metrics)
+	}
+	if len(snapshot.Diagnostics) != 1 || snapshot.Diagnostics[0].Collector != "cpu" {
+		t.Fatalf("diagnostics = %#v", snapshot.Diagnostics)
 	}
 }
