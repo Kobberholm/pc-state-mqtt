@@ -18,7 +18,9 @@ key_file = ""
 
 [collectors]
 cpu = true
+cpu_per_core = false
 memory = true
+memory_per_field = false
 thermal = true
 storage = true
 network = true

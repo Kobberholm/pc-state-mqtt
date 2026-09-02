@@ -2,7 +2,7 @@
 
 `pc-state-mqtt` is a Linux service for collecting PC hardware and runtime state and publishing it to hierarchical MQTT topics. Future releases will accept a deliberately constrained command protocol from the broker.
 
-Version 0.1.0 establishes the telemetry schema, layered configuration, CLI, and broker-free one-shot output. The current development branch adds live CPU and memory collection to one-shot snapshots. Remaining hardware collectors and MQTT publishing are implemented in the following planned feature releases; daemon mode currently exits with an explicit not-implemented error.
+Version 0.1.0 establishes the telemetry schema, layered configuration, CLI, and broker-free one-shot output. The current development branch adds live CPU and memory collection plus MQTT daemon publishing. Remaining hardware collectors are implemented in the following planned feature releases.
 
 ## Requirements
 
@@ -50,6 +50,14 @@ Produce a broker-free JSON snapshot:
 ./pc-state-mqtt --once
 ```
 
+Connect to the configured broker and publish continuously:
+
+```sh
+./pc-state-mqtt
+```
+
+The daemon publishes immediately after connecting and every `sample_interval` thereafter. It automatically reconnects and republishes the complete current state. `availability` is retained and changes to `online` after a connection acknowledgement; graceful shutdown publishes `offline`, while an unexpected disconnect uses the retained last will.
+
 Use an explicit configuration and override selected values:
 
 ```sh
@@ -58,6 +66,8 @@ Use an explicit configuration and override selected values:
   --host-id workstation \
   --sample-interval 2s
 ```
+
+CPU and memory data are each published as one structured metric by default. Restore separate CPU topics with `--cpu-per-core`, `PC_STATE_MQTT_CPU_PER_CORE=true`, or `cpu_per_core = true` under `[collectors]`. Restore separate memory-property topics with `--memory-per-field`, `PC_STATE_MQTT_MEMORY_PER_FIELD=true`, or `memory_per_field = true`.
 
 Run `./pc-state-mqtt --help` for all CLI options.
 
@@ -81,7 +91,7 @@ The settings view exposes every collector configured under `[collectors]`. CPU a
 
 The live-watch view gives every enabled feature its own runtime row with collection state, last gather time, metric count, last send state, and a countdown to its next update. CPU and memory currently have independent sampled schedules using `sample_interval`. Storage-class discovery uses `discovery_interval`, while display and Hyprland are already modeled as future event-driven sources without artificial countdowns.
 
-Collected metric paths and values appear below the schedule as the exact publish-payload preview. MQTT daemon publishing is not implemented yet, so the transport banner and feature rows explicitly report `not sent`; the UI will only record successful sends once publisher acknowledgements are available. Collector errors remain isolated to their feature row.
+Collected metric paths and values appear below the schedule as the exact publish-payload preview. The TUI connects to the configured broker asynchronously and publishes each feature update. Its `Sent` column changes from `not sent` to a timestamp only after every metric in that update receives its QoS 1 acknowledgement. Connection, collector, and publish errors remain visible without blocking unrelated features.
 
 The live watch ticks once per second and supports scrolling with `Up`/`Down`, `j`/`k`, `Page Up`, and `Page Down`. Press `r` to gather every enabled, implemented feature immediately or `Esc`/`m` to return to feature settings.
 
@@ -124,6 +134,10 @@ Configuration precedence, from lowest to highest, is:
 
 Common environment variables include `PC_STATE_MQTT_BROKER_URL`, `PC_STATE_MQTT_USERNAME`, `PC_STATE_MQTT_PASSWORD`, `PC_STATE_MQTT_HOST_ID`, `PC_STATE_MQTT_TOPIC_ROOT`, and `PC_STATE_MQTT_SAMPLE_INTERVAL`. Individual collectors use variables such as `PC_STATE_MQTT_COLLECTOR_DOCKER=false`.
 
+The CPU collector defaults to one MQTT topic and JSON object containing `total` and `cores`. Set `PC_STATE_MQTT_CPU_PER_CORE=true` to emit the previous separate property topics instead.
+
+The memory collector similarly defaults to one `memory` object. Set `PC_STATE_MQTT_MEMORY_PER_FIELD=true` to emit the previous separate memory-property topics instead.
+
 Prefer `PC_STATE_MQTT_PASSWORD` over storing a password in TOML. If a configuration file contains credentials, restrict it to mode `0600`. Configuration diagnostics redact passwords.
 
 Client certificate authentication requires both `cert_file` and `key_file`. `ca_file` can be configured independently for broker certificate verification.
@@ -148,12 +162,53 @@ Every leaf payload uses the same JSON envelope:
 }
 ```
 
-The schema version is `1.0`. Identity, metadata, and availability topics will be retained at QoS 1. Frequently changing samples will be unretained at QoS 1. Cumulative kernel counters are published as cumulative values so subscribers can derive rates over their preferred interval.
+By default, the `pc-state/<host>/cpu` envelope groups aggregate and logical-CPU readings:
+
+```json
+{
+  "value": {
+    "total": { "usage_percent": 18.75 },
+    "cores": {
+      "0": {
+        "usage_percent": 12.5,
+        "clock_current_mhz": 2400,
+        "clock_min_mhz": 800,
+        "clock_max_mhz": 4800
+      }
+    }
+  },
+  "observed_at": "2026-09-03T11:30:00Z"
+}
+```
+
+With per-core output enabled, the collector instead emits separate paths such as `cpu/total/usage_percent`, `cpu/0/usage_percent`, and `cpu/0/clock_current_mhz` as in earlier development builds.
+
+The default `pc-state/<host>/memory` envelope groups byte-normalized memory and swap readings:
+
+```json
+{
+  "value": {
+    "total_bytes": 34359738368,
+    "available_bytes": 17179869184,
+    "used_bytes": 17179869184,
+    "cached_bytes": 4294967296,
+    "buffers_bytes": 134217728,
+    "swap_total_bytes": 8589934592,
+    "swap_free_bytes": 6442450944,
+    "swap_used_bytes": 2147483648
+  },
+  "observed_at": "2026-09-03T11:30:00Z"
+}
+```
+
+With per-field output enabled, the collector emits the previous paths such as `memory/total_bytes`, `memory/available_bytes`, and `memory/used_bytes`.
+
+The schema version is `1.0`. Identity, metadata, and availability topics are retained at QoS 1. Frequently changing samples are unretained at QoS 1. Cumulative kernel counters are published as cumulative values so subscribers can derive rates over their preferred interval.
 
 ## Planned collectors
 
-- CPU utilization and per-core clocks are available in development; CPU identity and online state remain planned.
-- Memory, cache, and swap usage are available in development.
+- CPU utilization and logical-core clocks are available in development as one combined object by default or separate per-core topics when enabled; CPU identity and online state remain planned.
+- Memory, cache, and swap usage are available in development as one combined object by default or separate property topics when enabled.
 - Thermal, fan, voltage, and power sensors from hwmon and thermal zones.
 - Mounted filesystem usage, block-device identity, and disk I/O counters.
 - Network interfaces, addresses, link state, and traffic counters.
@@ -171,4 +226,4 @@ The initial command topic contract will validate requests and respond with `unsu
 
 Development is performed on `feature/*` branches. Every feature merge must update this README and `CHANGELOG.md` as applicable, increment the minor version exactly once, pass `make check`, and then merge into `main`.
 
-See `PLAN.md` for the complete staged implementation plan.
+See [PLAN.md](PLAN.md) for the staged roadmap. The self-contained files under [plans](plans) provide explicit per-phase handoffs for agents without prior project context.

@@ -13,6 +13,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"pc-state-mqtt/internal/config"
+	"pc-state-mqtt/internal/mqttclient"
 	"pc-state-mqtt/internal/systemstate"
 	"pc-state-mqtt/pkg/telemetry"
 )
@@ -27,6 +28,15 @@ var (
 )
 
 type collectFeatureFunc func(context.Context, config.Config, string, time.Time) telemetry.Snapshot
+type gatherFeatureFunc func(context.Context, config.Config, string, time.Time) systemstate.State
+
+type publisher interface {
+	PublishMetrics(context.Context, []telemetry.Metric) (int, error)
+	PublishAvailability(context.Context, string) error
+	Close(context.Context) error
+}
+
+type connectFunc func(context.Context, config.Config) (publisher, error)
 
 type Options struct {
 	Config     config.Config
@@ -34,6 +44,8 @@ type Options struct {
 	Input      io.Reader
 	Output     io.Writer
 	Collect    collectFeatureFunc
+	Gather     gatherFeatureFunc
+	Connect    connectFunc
 	Now        func() time.Time
 }
 
@@ -70,6 +82,7 @@ type featureRuntime struct {
 	nextUpdate   time.Time
 	metricCount  int
 	err          string
+	sendErr      string
 }
 
 type viewMode uint8
@@ -84,7 +97,12 @@ type model struct {
 	configuration config.Config
 	configPath    string
 	collect       collectFeatureFunc
+	gather        gatherFeatureFunc
+	connect       connectFunc
 	now           func() time.Time
+	publisher     publisher
+	connecting    bool
+	connectionErr string
 	mode          viewMode
 	cursor        int
 	offset        int
@@ -92,6 +110,7 @@ type model struct {
 	height        int
 	collecting    map[string]bool
 	runtime       map[string]featureRuntime
+	metrics       map[string][]telemetry.Metric
 	snapshot      telemetry.Snapshot
 	hasSnapshot   bool
 	status        string
@@ -99,8 +118,20 @@ type model struct {
 }
 
 type snapshotMsg struct {
-	feature  string
-	snapshot telemetry.Snapshot
+	feature string
+	state   systemstate.State
+}
+
+type connectedMsg struct {
+	publisher publisher
+	err       error
+}
+
+type publishedMsg struct {
+	feature string
+	at      time.Time
+	count   int
+	err     error
 }
 
 type refreshMsg struct {
@@ -115,6 +146,14 @@ func Run(ctx context.Context, options Options) error {
 	if options.Collect == nil {
 		options.Collect = systemstate.CollectFeature
 	}
+	if options.Gather == nil {
+		options.Gather = systemstate.GatherFeature
+	}
+	if options.Connect == nil {
+		options.Connect = func(ctx context.Context, configuration config.Config) (publisher, error) {
+			return mqttclient.Connect(ctx, configuration)
+		}
+	}
 	program := tea.NewProgram(
 		newModel(ctx, options),
 		tea.WithAltScreen(),
@@ -122,7 +161,14 @@ func Run(ctx context.Context, options Options) error {
 		tea.WithInput(options.Input),
 		tea.WithOutput(options.Output),
 	)
-	_, err := program.Run()
+	finalModel, err := program.Run()
+	if result, ok := finalModel.(model); ok && result.publisher != nil {
+		closeContext, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if closeErr := result.publisher.Close(closeContext); err == nil {
+			err = closeErr
+		}
+	}
 	return err
 }
 
@@ -135,15 +181,28 @@ func newModel(ctx context.Context, options Options) model {
 	if now == nil {
 		now = time.Now
 	}
+	gatherer := options.Gather
+	if gatherer == nil {
+		gatherer = func(ctx context.Context, configuration config.Config, featureName string, observedAt time.Time) systemstate.State {
+			snapshot := collector(ctx, configuration, featureName, observedAt)
+			return systemstate.State{Snapshot: snapshot}
+		}
+	}
 	return model{
 		ctx: ctx, configuration: options.Config, configPath: options.ConfigPath,
-		collect: collector, now: now, mode: settingsView,
+		collect: collector, gather: gatherer, connect: options.Connect, now: now, mode: settingsView,
 		collecting: make(map[string]bool), runtime: make(map[string]featureRuntime),
+		metrics:  make(map[string][]telemetry.Metric),
 		snapshot: telemetry.NewSnapshot(options.Config.HostID, now(), nil, nil),
 	}
 }
 
-func (model) Init() tea.Cmd { return nil }
+func (current model) Init() tea.Cmd {
+	if current.connect == nil {
+		return nil
+	}
+	return current.connectCmd()
+}
 
 func (current model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	switch message := message.(type) {
@@ -159,20 +218,57 @@ func (current model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return current.updateMonitor(message)
 	case snapshotMsg:
-		current.mergeSnapshot(message.feature, message.snapshot)
+		current.mergeSnapshot(message.feature, message.state.Snapshot)
 		current.hasSnapshot = true
 		current.collecting[message.feature] = false
 		runtime := current.runtime[message.feature]
-		runtime.lastGathered = message.snapshot.ObservedAt
-		runtime.metricCount = len(message.snapshot.Metrics)
-		runtime.err = diagnosticText(message.snapshot.Diagnostics)
+		runtime.lastGathered = message.state.Snapshot.ObservedAt
+		runtime.metricCount = len(message.state.Snapshot.Metrics)
+		runtime.err = diagnosticText(message.state.Snapshot.Diagnostics)
+		runtime.sendErr = ""
 		if featureByName(message.feature).cadence != eventCadence {
-			runtime.nextUpdate = message.snapshot.ObservedAt.Add(current.intervalFor(featureByName(message.feature)))
+			runtime.nextUpdate = message.state.Snapshot.ObservedAt.Add(current.intervalFor(featureByName(message.feature)))
 		}
 		current.runtime[message.feature] = runtime
 		current.statusErr = false
-		current.status = fmt.Sprintf("Gathered %s at %s", message.feature, message.snapshot.ObservedAt.Local().Format("15:04:05"))
+		current.status = fmt.Sprintf("Gathered %s at %s", message.feature, message.state.Snapshot.ObservedAt.Local().Format("15:04:05"))
 		current.clampOffset()
+		current.metrics[message.feature] = message.state.Metrics
+		if current.publisher != nil && len(message.state.Metrics) > 0 {
+			return current, current.publishCmd(message.feature, message.state.Metrics)
+		}
+	case connectedMsg:
+		current.connecting = false
+		current.connectionErr = ""
+		if message.err != nil {
+			current.connectionErr = message.err.Error()
+			current.statusErr = true
+			current.status = "MQTT: " + message.err.Error()
+			break
+		}
+		current.publisher = message.publisher
+		current.statusErr = false
+		current.status = "Connected to " + current.configuration.MQTT.BrokerURL
+		commands := make([]tea.Cmd, 0, len(current.metrics))
+		for featureName, metrics := range current.metrics {
+			if len(metrics) > 0 {
+				commands = append(commands, current.publishCmd(featureName, metrics))
+			}
+		}
+		return current, tea.Batch(commands...)
+	case publishedMsg:
+		runtime := current.runtime[message.feature]
+		if message.err != nil {
+			runtime.sendErr = message.err.Error()
+			current.statusErr = true
+			current.status = fmt.Sprintf("Publish %s: %v", message.feature, message.err)
+		} else {
+			runtime.lastSent = message.at
+			runtime.sendErr = ""
+			current.statusErr = false
+			current.status = fmt.Sprintf("Sent %d %s metrics at %s", message.count, message.feature, message.at.Local().Format("15:04:05"))
+		}
+		current.runtime[message.feature] = runtime
 	case refreshMsg:
 		current.snapshot.ObservedAt = message.now
 		if current.mode == monitorView {
@@ -249,9 +345,25 @@ func (current model) updateMonitor(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 func (current model) collectCmd(featureName string) tea.Cmd {
 	ctx := current.ctx
 	configuration := current.configuration
-	collect := current.collect
+	gather := current.gather
 	return func() tea.Msg {
-		return snapshotMsg{feature: featureName, snapshot: collect(ctx, configuration, featureName, current.now())}
+		return snapshotMsg{feature: featureName, state: gather(ctx, configuration, featureName, current.now())}
+	}
+}
+
+func (current model) connectCmd() tea.Cmd {
+	ctx, configuration, connect := current.ctx, current.configuration, current.connect
+	return func() tea.Msg {
+		client, err := connect(ctx, configuration)
+		return connectedMsg{publisher: client, err: err}
+	}
+}
+
+func (current model) publishCmd(featureName string, metrics []telemetry.Metric) tea.Cmd {
+	ctx, client, now := current.ctx, current.publisher, current.now
+	return func() tea.Msg {
+		count, err := client.PublishMetrics(ctx, metrics)
+		return publishedMsg{feature: featureName, at: now(), count: count, err: err}
 	}
 }
 
@@ -303,7 +415,13 @@ func (current model) monitorView() string {
 		view.WriteString(mutedStyle.Render("  refreshing"))
 	}
 	view.WriteString("\n")
-	view.WriteString(mutedStyle.Render("MQTT delivery: inactive until daemon publishing is implemented; gathered values are not sent"))
+	delivery := "MQTT delivery: connecting to " + current.configuration.MQTT.BrokerURL
+	if current.publisher != nil {
+		delivery = "MQTT delivery: connected to " + current.configuration.MQTT.BrokerURL + " (QoS 1 acknowledgements)"
+	} else if current.connectionErr != "" {
+		delivery = "MQTT delivery: " + current.connectionErr
+	}
+	view.WriteString(mutedStyle.Render(delivery))
 	view.WriteString("\n\n")
 	view.WriteString(mutedStyle.Render("Feature     State          Gathered             Sent       Next"))
 	view.WriteByte('\n')
@@ -432,14 +550,20 @@ func (current model) featureRuntimeRow(feature feature) string {
 	if !runtime.lastGathered.IsZero() {
 		gathered = fmt.Sprintf("%s / %d", runtime.lastGathered.Local().Format("15:04:05"), runtime.metricCount)
 	}
+	sent := "not sent"
+	if !runtime.lastSent.IsZero() {
+		sent = runtime.lastSent.Local().Format("15:04:05")
+	}
 	if feature.implemented && feature.cadence == eventCadence {
 		next = "event-driven"
 	} else if feature.implemented && !runtime.nextUpdate.IsZero() && !current.collecting[feature.name] {
 		next = formatCountdown(runtime.nextUpdate.Sub(current.snapshot.ObservedAt))
 	}
-	line := fmt.Sprintf("%-11s %-14s %-20s %-10s %s", feature.name, state, gathered, "not sent", next)
-	if runtime.err != "" {
-		line += "  " + runtime.err
+	line := fmt.Sprintf("%-11s %-14s %-20s %-10s %s", feature.name, state, gathered, sent, next)
+	rowError := strings.Join([]string{runtime.err, runtime.sendErr}, "; ")
+	rowError = strings.Trim(rowError, "; ")
+	if rowError != "" {
+		line += "  " + rowError
 		return errorStyle.Render(line)
 	}
 	if feature.implemented {

@@ -33,6 +33,8 @@ docker = false
 		"PC_STATE_MQTT_SAMPLE_INTERVAL":  "7s",
 		"PC_STATE_MQTT_PASSWORD":         "env-secret",
 		"PC_STATE_MQTT_COLLECTOR_DOCKER": "true",
+		"PC_STATE_MQTT_CPU_PER_CORE":     "true",
+		"PC_STATE_MQTT_MEMORY_PER_FIELD": "true",
 	}
 	configuration, err := Load(path, true, "default-host", func(key string) (string, bool) {
 		value, exists := environment[key]
@@ -48,8 +50,8 @@ docker = false
 	if configuration.SampleInterval.Duration != 7*time.Second {
 		t.Fatalf("sample interval = %s", configuration.SampleInterval.Duration)
 	}
-	if !configuration.Collectors.Docker {
-		t.Fatal("environment did not override Docker collector")
+	if !configuration.Collectors.Docker || !configuration.Collectors.CPUPerCore || !configuration.Collectors.MemoryPerField {
+		t.Fatal("environment did not override collector settings")
 	}
 	if output := configuration.String(); strings.Contains(output, "env-secret") || !strings.Contains(output, "<redacted>") {
 		t.Fatalf("configuration string exposes secret: %s", output)
@@ -61,7 +63,7 @@ func TestLoadMissingOptionalFileUsesDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if configuration.MQTT.BrokerURL != "tcp://localhost:1883" || !configuration.Collectors.CPU {
+	if configuration.MQTT.BrokerURL != "tcp://localhost:1883" || !configuration.Collectors.CPU || configuration.Collectors.CPUPerCore || configuration.Collectors.MemoryPerField {
 		t.Fatalf("unexpected defaults: %+v", configuration)
 	}
 }

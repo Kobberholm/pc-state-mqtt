@@ -33,7 +33,38 @@ func TestReadSamples(t *testing.T) {
 	}
 }
 
-func TestCollectorAddsAvailableClocks(t *testing.T) {
+func TestCollectorCombinesCPUsByDefault(t *testing.T) {
+	collector := testCollector(t)
+	metrics, err := collector.Collect(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(metrics) != 1 || len(metrics[0].Path) != 1 || metrics[0].Path[0] != "cpu" {
+		t.Fatalf("metrics = %#v", metrics)
+	}
+	state, ok := metrics[0].Value.(State)
+	if !ok || state.Total.UsagePercent != 40 || state.Cores["0"].UsagePercent != 40 {
+		t.Fatalf("CPU state = %#v", metrics[0].Value)
+	}
+	if state.Cores["0"].ClockCurrentMHz == nil || *state.Cores["0"].ClockCurrentMHz != 2400 {
+		t.Fatalf("core state = %#v", state.Cores["0"])
+	}
+}
+
+func TestCollectorCanEmitPerCoreMetrics(t *testing.T) {
+	collector := testCollector(t)
+	collector.PerCoreOutput = true
+	metrics, err := collector.Collect(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(metrics) != 3 {
+		t.Fatalf("got %d metrics, want total usage, CPU usage, and current clock", len(metrics))
+	}
+}
+
+func testCollector(t *testing.T) *Collector {
+	t.Helper()
 	root := t.TempDir()
 	procRoot := filepath.Join(root, "proc")
 	sysRoot := filepath.Join(root, "sys")
@@ -56,11 +87,5 @@ func TestCollectorAddsAvailableClocks(t *testing.T) {
 	collector.Wait = func(context.Context, time.Duration) error {
 		return os.WriteFile(statPath, []byte("cpu 5 0 0 15 0\ncpu0 5 0 0 15 0\n"), 0o600)
 	}
-	metrics, err := collector.Collect(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(metrics) != 3 {
-		t.Fatalf("got %d metrics, want total usage, CPU usage, and current clock", len(metrics))
-	}
+	return collector
 }

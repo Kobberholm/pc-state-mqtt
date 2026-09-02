@@ -9,6 +9,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"pc-state-mqtt/internal/config"
+	"pc-state-mqtt/internal/systemstate"
 	"pc-state-mqtt/pkg/telemetry"
 )
 
@@ -42,6 +43,7 @@ func TestMonitorUsesCurrentFeatureConfiguration(t *testing.T) {
 				Path: []string{"memory", "used_bytes"}, Value: uint64(42), Unit: "bytes", ObservedAt: observedAt,
 			}}, nil)
 		},
+		Connect: nil,
 	})
 	current.configuration.Collectors.CPU = false
 	current.mode = monitorView
@@ -63,6 +65,33 @@ func TestMonitorUsesCurrentFeatureConfiguration(t *testing.T) {
 	monitor = updated.(model)
 	if !strings.Contains(monitor.View(), "3s") {
 		t.Fatalf("countdown did not advance: %q", monitor.View())
+	}
+}
+
+type acknowledgedPublisher struct{}
+
+func (acknowledgedPublisher) PublishMetrics(_ context.Context, metrics []telemetry.Metric) (int, error) {
+	return len(metrics), nil
+}
+func (acknowledgedPublisher) PublishAvailability(context.Context, string) error { return nil }
+func (acknowledgedPublisher) Close(context.Context) error                       { return nil }
+
+func TestMonitorRecordsAcknowledgedPublish(t *testing.T) {
+	now := time.Date(2026, 9, 3, 12, 0, 0, 0, time.UTC)
+	current := newModel(context.Background(), Options{Config: config.Defaults("host"), Now: func() time.Time { return now }})
+	current.publisher = acknowledgedPublisher{}
+	metric := telemetry.Metric{Path: []string{"memory", "used_bytes"}, Value: 42, ObservedAt: now}
+	updated, command := current.Update(snapshotMsg{feature: "Memory", state: systemstate.State{
+		Snapshot: telemetry.NewSnapshot("host", now, []telemetry.Metric{metric}, nil), Metrics: []telemetry.Metric{metric},
+	}})
+	current = updated.(model)
+	if command == nil {
+		t.Fatal("gather did not schedule publish")
+	}
+	updated, _ = current.Update(command())
+	current = updated.(model)
+	if !current.runtime["Memory"].lastSent.Equal(now) || !strings.Contains(current.View(), "Sent 1 Memory metrics") {
+		t.Fatalf("runtime = %#v, view = %q", current.runtime["Memory"], current.View())
 	}
 }
 

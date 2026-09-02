@@ -14,8 +14,20 @@ import (
 )
 
 type Collector struct {
-	ProcRoot string
-	Now      func() time.Time
+	ProcRoot       string
+	PerFieldOutput bool
+	Now            func() time.Time
+}
+
+type State struct {
+	TotalBytes     uint64  `json:"total_bytes"`
+	AvailableBytes uint64  `json:"available_bytes"`
+	UsedBytes      uint64  `json:"used_bytes"`
+	CachedBytes    *uint64 `json:"cached_bytes,omitempty"`
+	BuffersBytes   *uint64 `json:"buffers_bytes,omitempty"`
+	SwapTotalBytes *uint64 `json:"swap_total_bytes,omitempty"`
+	SwapFreeBytes  *uint64 `json:"swap_free_bytes,omitempty"`
+	SwapUsedBytes  *uint64 `json:"swap_used_bytes,omitempty"`
 }
 
 func New(procRoot string) *Collector {
@@ -51,6 +63,9 @@ func (collector *Collector) Collect(context.Context) ([]telemetry.Metric, error)
 		{"SwapTotal", "swap_total_bytes"}, {"SwapFree", "swap_free_bytes"}, {"SwapUsed", "swap_used_bytes"},
 	}
 	observedAt := collector.Now().UTC()
+	state := State{
+		TotalBytes: values["MemTotal"], AvailableBytes: values["MemAvailable"], UsedBytes: values["MemUsed"],
+	}
 	metrics := make([]telemetry.Metric, 0, len(fields))
 	for _, field := range fields {
 		value, exists := values[field.key]
@@ -61,12 +76,34 @@ func (collector *Collector) Collect(context.Context) ([]telemetry.Metric, error)
 		if field.key == "MemTotal" || field.key == "SwapTotal" {
 			retention = telemetry.Retained
 		}
+		setStateField(&state, field.key, value)
+		if !collector.PerFieldOutput {
+			continue
+		}
 		metrics = append(metrics, telemetry.Metric{
 			Path: []string{"memory", field.path}, Value: value, Unit: "bytes",
 			ObservedAt: observedAt, Retention: retention,
 		})
 	}
+	if !collector.PerFieldOutput {
+		return []telemetry.Metric{{Path: []string{"memory"}, Value: state, ObservedAt: observedAt}}, nil
+	}
 	return metrics, nil
+}
+
+func setStateField(state *State, key string, value uint64) {
+	switch key {
+	case "Cached":
+		state.CachedBytes = &value
+	case "Buffers":
+		state.BuffersBytes = &value
+	case "SwapTotal":
+		state.SwapTotalBytes = &value
+	case "SwapFree":
+		state.SwapFreeBytes = &value
+	case "SwapUsed":
+		state.SwapUsedBytes = &value
+	}
 }
 
 func readMeminfo(path string) (map[string]uint64, error) {

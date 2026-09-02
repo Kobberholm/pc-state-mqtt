@@ -40,15 +40,17 @@ type MQTT struct {
 }
 
 type Collectors struct {
-	CPU      bool `toml:"cpu"`
-	Memory   bool `toml:"memory"`
-	Thermal  bool `toml:"thermal"`
-	Storage  bool `toml:"storage"`
-	Network  bool `toml:"network"`
-	GPU      bool `toml:"gpu"`
-	Display  bool `toml:"display"`
-	Hyprland bool `toml:"hyprland"`
-	Docker   bool `toml:"docker"`
+	CPU            bool `toml:"cpu"`
+	CPUPerCore     bool `toml:"cpu_per_core"`
+	Memory         bool `toml:"memory"`
+	MemoryPerField bool `toml:"memory_per_field"`
+	Thermal        bool `toml:"thermal"`
+	Storage        bool `toml:"storage"`
+	Network        bool `toml:"network"`
+	GPU            bool `toml:"gpu"`
+	Display        bool `toml:"display"`
+	Hyprland       bool `toml:"hyprland"`
+	Docker         bool `toml:"docker"`
 }
 
 type Config struct {
@@ -223,6 +225,20 @@ func (configuration *Config) applyEnvironment(lookup LookupEnv) error {
 		"NETWORK": &configuration.Collectors.Network, "GPU": &configuration.Collectors.GPU,
 		"DISPLAY": &configuration.Collectors.Display, "HYPRLAND": &configuration.Collectors.Hyprland,
 		"DOCKER": &configuration.Collectors.Docker,
+	}
+	if value, exists := lookup("PC_STATE_MQTT_CPU_PER_CORE"); exists {
+		parsed, err := strconv.ParseBool(value)
+		if err != nil {
+			return fmt.Errorf("environment PC_STATE_MQTT_CPU_PER_CORE: %w", err)
+		}
+		configuration.Collectors.CPUPerCore = parsed
+	}
+	if value, exists := lookup("PC_STATE_MQTT_MEMORY_PER_FIELD"); exists {
+		parsed, err := strconv.ParseBool(value)
+		if err != nil {
+			return fmt.Errorf("environment PC_STATE_MQTT_MEMORY_PER_FIELD: %w", err)
+		}
+		configuration.Collectors.MemoryPerField = parsed
 	}
 	for name, target := range collectorsByKey {
 		key := "PC_STATE_MQTT_COLLECTOR_" + name

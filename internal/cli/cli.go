@@ -52,6 +52,8 @@ func Parse(args []string, hostname string, output io.Writer) (Options, error) {
 	flags.DurationVar(&options.Config.SampleInterval.Duration, "sample-interval", configuration.SampleInterval.Duration, "metric sample interval")
 	flags.DurationVar(&options.Config.DiscoveryInterval.Duration, "discovery-interval", configuration.DiscoveryInterval.Duration, "hardware discovery interval")
 	flags.DurationVar(&options.Config.CollectorTimeout.Duration, "collector-timeout", configuration.CollectorTimeout.Duration, "timeout for each collector")
+	flags.BoolVar(&options.Config.Collectors.CPUPerCore, "cpu-per-core", configuration.Collectors.CPUPerCore, "publish CPU properties as separate per-core topics")
+	flags.BoolVar(&options.Config.Collectors.MemoryPerField, "memory-per-field", configuration.Collectors.MemoryPerField, "publish memory properties as separate topics")
 	if err := flags.Parse(args); err != nil {
 		return Options{}, err
 	}

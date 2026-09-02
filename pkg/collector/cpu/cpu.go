@@ -23,8 +23,21 @@ type Collector struct {
 	ProcRoot       string
 	SysRoot        string
 	SampleDuration time.Duration
+	PerCoreOutput  bool
 	Now            func() time.Time
 	Wait           func(context.Context, time.Duration) error
+}
+
+type State struct {
+	Total CPU            `json:"total"`
+	Cores map[string]CPU `json:"cores"`
+}
+
+type CPU struct {
+	UsagePercent    float64  `json:"usage_percent"`
+	ClockCurrentMHz *float64 `json:"clock_current_mhz,omitempty"`
+	ClockMinMHz     *float64 `json:"clock_min_mhz,omitempty"`
+	ClockMaxMHz     *float64 `json:"clock_max_mhz,omitempty"`
 }
 
 func New(procRoot, sysRoot string) *Collector {
@@ -59,6 +72,7 @@ func (collector *Collector) Collect(ctx context.Context) ([]telemetry.Metric, er
 	sort.Strings(names)
 
 	metrics := make([]telemetry.Metric, 0, len(names)*2)
+	state := State{Cores: make(map[string]CPU, max(0, len(names)-1))}
 	for _, name := range names {
 		previous, exists := before[name]
 		if !exists {
@@ -72,13 +86,25 @@ func (collector *Collector) Collect(ctx context.Context) ([]telemetry.Metric, er
 		if id == "" {
 			id = "total"
 		}
-		metrics = append(metrics, telemetry.Metric{
-			Path: []string{"cpu", id, "usage_percent"}, Value: usage,
-			Unit: "percent", ObservedAt: observedAt,
-		})
-		if id != "total" {
-			metrics = append(metrics, collector.clockMetrics(id, observedAt)...)
+		cpuState := CPU{UsagePercent: usage}
+		if id == "total" {
+			state.Total = cpuState
+		} else {
+			cpuState = collector.clockState(id, cpuState)
+			state.Cores[id] = cpuState
 		}
+		if collector.PerCoreOutput {
+			metrics = append(metrics, telemetry.Metric{
+				Path: []string{"cpu", id, "usage_percent"}, Value: usage,
+				Unit: "percent", ObservedAt: observedAt,
+			})
+			if id != "total" {
+				metrics = append(metrics, clockMetrics(id, cpuState, observedAt)...)
+			}
+		}
+	}
+	if !collector.PerCoreOutput {
+		return []telemetry.Metric{{Path: []string{"cpu"}, Value: state, ObservedAt: observedAt}}, nil
 	}
 	return metrics, nil
 }
@@ -139,17 +165,16 @@ func utilization(before, after sample) (float64, bool) {
 	return float64(totalDelta-idleDelta) * 100 / float64(totalDelta), true
 }
 
-func (collector *Collector) clockMetrics(id string, observedAt time.Time) []telemetry.Metric {
+func (collector *Collector) clockState(id string, state CPU) CPU {
 	directory := filepath.Join(collector.SysRoot, "devices/system/cpu", "cpu"+id, "cpufreq")
 	files := []struct {
-		name string
-		path string
+		path  string
+		value **float64
 	}{
-		{"clock_current_mhz", "scaling_cur_freq"},
-		{"clock_min_mhz", "scaling_min_freq"},
-		{"clock_max_mhz", "scaling_max_freq"},
+		{"scaling_cur_freq", &state.ClockCurrentMHz},
+		{"scaling_min_freq", &state.ClockMinMHz},
+		{"scaling_max_freq", &state.ClockMaxMHz},
 	}
-	metrics := make([]telemetry.Metric, 0, len(files))
 	for _, file := range files {
 		contents, err := os.ReadFile(filepath.Join(directory, file.path))
 		if err != nil {
@@ -159,8 +184,28 @@ func (collector *Collector) clockMetrics(id string, observedAt time.Time) []tele
 		if err != nil {
 			continue
 		}
+		megahertz := float64(kilohertz) / 1000
+		*file.value = &megahertz
+	}
+	return state
+}
+
+func clockMetrics(id string, state CPU, observedAt time.Time) []telemetry.Metric {
+	values := []struct {
+		name  string
+		value *float64
+	}{
+		{"clock_current_mhz", state.ClockCurrentMHz},
+		{"clock_min_mhz", state.ClockMinMHz},
+		{"clock_max_mhz", state.ClockMaxMHz},
+	}
+	metrics := make([]telemetry.Metric, 0, len(values))
+	for _, value := range values {
+		if value.value == nil {
+			continue
+		}
 		metrics = append(metrics, telemetry.Metric{
-			Path: []string{"cpu", id, file.name}, Value: float64(kilohertz) / 1000,
+			Path: []string{"cpu", id, value.name}, Value: *value.value,
 			Unit: "MHz", ObservedAt: observedAt,
 		})
 	}

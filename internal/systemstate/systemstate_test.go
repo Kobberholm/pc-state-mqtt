@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"pc-state-mqtt/internal/config"
+	"pc-state-mqtt/pkg/collector/memory"
 )
 
 func TestCollectFeatureCollectsOnlyRequestedFeature(t *testing.T) {
@@ -18,13 +19,13 @@ func TestCollectFeatureCollectsOnlyRequestedFeature(t *testing.T) {
 	configuration := config.Defaults("host")
 	configuration.ProcRoot = procRoot
 	snapshot := CollectFeature(context.Background(), configuration, "memory", time.Unix(1, 0))
-	if _, exists := snapshot.Metrics["memory/used_bytes"]; !exists {
+	envelope, exists := snapshot.Metrics["memory"]
+	if !exists || len(snapshot.Metrics) != 1 {
 		t.Fatalf("metrics = %#v", snapshot.Metrics)
 	}
-	for path := range snapshot.Metrics {
-		if len(path) < len("memory/") || path[:len("memory/")] != "memory/" {
-			t.Fatalf("unexpected metric %q", path)
-		}
+	state, ok := envelope.Value.(memory.State)
+	if !ok || state.UsedBytes != 600*1024 {
+		t.Fatalf("memory value = %#v", envelope.Value)
 	}
 }
 
@@ -34,5 +35,36 @@ func TestCollectFeatureSkipsDisabledFeature(t *testing.T) {
 	snapshot := CollectFeature(context.Background(), configuration, "memory", time.Unix(1, 0))
 	if len(snapshot.Metrics) != 0 || len(snapshot.Diagnostics) != 0 {
 		t.Fatalf("snapshot = %+v", snapshot)
+	}
+}
+
+func TestGatherPreservesMetricRetention(t *testing.T) {
+	configuration := config.Defaults("host")
+	configuration.Collectors.CPU = false
+	configuration.Collectors.Memory = false
+	state := Gather(context.Background(), configuration, time.Unix(1, 0))
+	if len(state.Metrics) != 2 {
+		t.Fatalf("metrics = %#v", state.Metrics)
+	}
+	for _, metric := range state.Metrics {
+		if metric.Retention != 1 {
+			t.Fatalf("metric retention = %d", metric.Retention)
+		}
+	}
+}
+
+func TestCPUCollectorUsesConfiguredOutputMode(t *testing.T) {
+	configuration := config.Defaults("host")
+	configuration.Collectors.CPUPerCore = true
+	if !cpuCollector(configuration).PerCoreOutput {
+		t.Fatal("CPU per-core output was not enabled")
+	}
+}
+
+func TestMemoryCollectorUsesConfiguredOutputMode(t *testing.T) {
+	configuration := config.Defaults("host")
+	configuration.Collectors.MemoryPerField = true
+	if !memoryCollector(configuration).PerFieldOutput {
+		t.Fatal("memory per-field output was not enabled")
 	}
 }

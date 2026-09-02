@@ -14,11 +14,11 @@ func TestParseCLIOverridesFile(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	options, err := Parse([]string{"--config", path, "--host-id", "cli-host", "--sample-interval", "2s", "--once"}, "default-host", io.Discard)
+	options, err := Parse([]string{"--config", path, "--host-id", "cli-host", "--sample-interval", "2s", "--cpu-per-core", "--memory-per-field", "--once"}, "default-host", io.Discard)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if options.Config.HostID != "cli-host" || options.Config.SampleInterval.Duration != 2*time.Second || !options.Once {
+	if options.Config.HostID != "cli-host" || options.Config.SampleInterval.Duration != 2*time.Second || !options.Config.Collectors.CPUPerCore || !options.Config.Collectors.MemoryPerField || !options.Once {
 		t.Fatalf("unexpected options: %+v", options)
 	}
 }

@@ -54,13 +54,11 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		return 0
 	}
 
-	select {
-	case <-ctx.Done():
-		return 0
-	default:
-		fmt.Fprintln(stderr, "pc-state-mqtt: MQTT daemon mode is not implemented yet; use --once")
+	if err := runDaemon(ctx, stderr, options.Config); err != nil {
+		fmt.Fprintf(stderr, "pc-state-mqtt: MQTT: %v\n", err)
 		return 1
 	}
+	return 0
 }
 
 func writeSnapshot(ctx context.Context, output io.Writer, configuration config.Config, observedAt time.Time) error {

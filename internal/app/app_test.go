@@ -76,7 +76,7 @@ func TestWriteSnapshotKeepsSuccessfulCollectorData(t *testing.T) {
 	if err := json.Unmarshal(output.Bytes(), &snapshot); err != nil {
 		t.Fatal(err)
 	}
-	if _, exists := snapshot.Metrics["memory/used_bytes"]; !exists {
+	if _, exists := snapshot.Metrics["memory"]; !exists {
 		t.Fatalf("metrics = %#v", snapshot.Metrics)
 	}
 	if len(snapshot.Diagnostics) != 1 || snapshot.Diagnostics[0].Collector != "cpu" {

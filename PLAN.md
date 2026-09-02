@@ -2,6 +2,18 @@
 
 Create an independent Go 1.25 repository that continuously collects Linux PC state and publishes it as versioned, timestamped leaf metrics over MQTT. Keep Linux integrations root-free where possible, degrade individual collectors cleanly, support broker-free one-shot JSON diagnostics, ship user and system systemd units, and reserve an inbound command contract that never executes commands in the initial release.
 
+## Agent handoff plans
+
+The phase summaries below are the high-level roadmap. For implementation by an agent with no prior conversation context, use the corresponding standalone handoff file. Each handoff records current repository state, exact ownership boundaries, ordered tasks, tests, validation commands, release steps, and acceptance criteria.
+
+1. [Phase 1: Repository and contracts](plans/phase-01-bootstrap.md)
+2. [Phase 2: Core host telemetry](plans/phase-02-core-telemetry.md)
+3. [Phase 3: GPU and display telemetry](plans/phase-03-gpu-display.md)
+4. [Phase 4: Docker and MQTT lifecycle](plans/phase-04-mqtt-docker-lifecycle.md)
+5. [Phase 5: Service packaging and release hardening](plans/phase-05-service-release.md)
+
+Before following any handoff, run `git status --short --branch`. Preserve a dirty worktree and reread files that differ from the handoff's recorded state; never discard user or prior-agent changes merely to match the plan.
+
 ## Phase 1: Repository and contracts (`feature/bootstrap`, version `0.1.0`)
 
 1. Create the idiomatic top-level layout: `cmd/pc-state-mqtt`, `internal/app`, `internal/cli`, `internal/config`, `internal/mqttclient`, `internal/command`, and public `pkg/telemetry` plus `pkg/collector` domain packages. Use module name `pc-state-mqtt` and Go 1.25.
