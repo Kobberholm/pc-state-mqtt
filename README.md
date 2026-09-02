@@ -20,6 +20,22 @@ make build
 
 The binary is written to `./pc-state-mqtt`. `make check` formats the code, runs `go vet`, executes all unit tests, and builds the executable.
 
+### Local MQTT test broker
+
+Start the localhost-only Mosquitto test broker with Docker Compose:
+
+```sh
+make mqtt-up
+```
+
+The broker listens on `tcp://localhost:1883`, permits anonymous connections, keeps no persistent state, and is intended only for local development. Override the host port when 1883 is occupied:
+
+```sh
+MQTT_TEST_PORT=1884 make mqtt-up
+```
+
+View broker logs with `make mqtt-logs` and remove the stack with `make mqtt-down`. The Compose project uses `compose.test.yaml` and the test-only configuration in `test/mosquitto/mosquitto.conf`.
+
 ## Usage
 
 Print the current version:
