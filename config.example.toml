@@ -1,0 +1,28 @@
+host_id = "workstation"
+topic_root = "pc-state"
+sample_interval = "5s"
+discovery_interval = "60s"
+collector_timeout = "3s"
+proc_root = "/proc"
+sys_root = "/sys"
+docker_socket = "/var/run/docker.sock"
+
+[mqtt]
+broker_url = "tcp://localhost:1883"
+client_id = "pc-state-mqtt-workstation"
+username = ""
+password = ""
+ca_file = ""
+cert_file = ""
+key_file = ""
+
+[collectors]
+cpu = true
+memory = true
+thermal = true
+storage = true
+network = true
+gpu = true
+display = true
+hyprland = true
+docker = true
