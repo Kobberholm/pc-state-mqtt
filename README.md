@@ -76,10 +76,14 @@ The settings view exposes every collector configured under `[collectors]`. CPU a
 - `Up`/`Down` or `j`/`k`: select a feature.
 - `Space` or `Enter`: enable or disable the selected feature for this session.
 - `s`: atomically save the collector settings to the active TOML configuration with mode `0600`; other settings and credentials are preserved.
-- `m`: open the built-in live monitor using the current feature selection.
+- `m`: open the built-in live watch using the current feature selection.
 - `q`: quit.
 
-The monitoring view refreshes at `sample_interval`, shows collector diagnostics, and supports scrolling with `Up`/`Down`, `j`/`k`, `Page Up`, and `Page Down`. Press `r` to refresh immediately or `Esc`/`m` to return to feature settings.
+The live-watch view gives every enabled feature its own runtime row with collection state, last gather time, metric count, last send state, and a countdown to its next update. CPU and memory currently have independent sampled schedules using `sample_interval`. Storage-class discovery uses `discovery_interval`, while display and Hyprland are already modeled as future event-driven sources without artificial countdowns.
+
+Collected metric paths and values appear below the schedule as the exact publish-payload preview. MQTT daemon publishing is not implemented yet, so the transport banner and feature rows explicitly report `not sent`; the UI will only record successful sends once publisher acknowledgements are available. Collector errors remain isolated to their feature row.
+
+The live watch ticks once per second and supports scrolling with `Up`/`Down`, `j`/`k`, `Page Up`, and `Page Down`. Press `r` to gather every enabled, implemented feature immediately or `Esc`/`m` to return to feature settings.
 
 `--tui` uses the same configuration, environment variables, and CLI overrides as one-shot and daemon modes. It cannot be combined with `--once`.
 

@@ -2,6 +2,7 @@ package systemstate
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"pc-state-mqtt/internal/config"
@@ -32,4 +33,23 @@ func enabledCollectors(configuration config.Config) []collector.Collector {
 		collectors = append(collectors, memory.New(configuration.ProcRoot))
 	}
 	return collectors
+}
+
+func CollectFeature(ctx context.Context, configuration config.Config, name string, observedAt time.Time) telemetry.Snapshot {
+	var selected collector.Collector
+	switch strings.ToLower(name) {
+	case "cpu":
+		if configuration.Collectors.CPU {
+			selected = cpu.New(configuration.ProcRoot, configuration.SysRoot)
+		}
+	case "memory":
+		if configuration.Collectors.Memory {
+			selected = memory.New(configuration.ProcRoot)
+		}
+	}
+	if selected == nil {
+		return telemetry.NewSnapshot(configuration.HostID, observedAt, nil, nil)
+	}
+	result := collector.CollectAll(ctx, configuration.CollectorTimeout.Duration, selected)
+	return telemetry.NewSnapshot(configuration.HostID, observedAt, result.Metrics, result.Diagnostics)
 }

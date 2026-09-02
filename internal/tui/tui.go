@@ -26,32 +26,50 @@ var (
 	valueStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("81"))
 )
 
-type collectFunc func(context.Context, config.Config, time.Time) telemetry.Snapshot
+type collectFeatureFunc func(context.Context, config.Config, string, time.Time) telemetry.Snapshot
 
 type Options struct {
 	Config     config.Config
 	ConfigPath string
 	Input      io.Reader
 	Output     io.Writer
-	Collect    collectFunc
+	Collect    collectFeatureFunc
+	Now        func() time.Time
 }
+
+type cadence uint8
+
+const (
+	sampleCadence cadence = iota
+	discoveryCadence
+	eventCadence
+)
 
 type feature struct {
 	name        string
 	description string
 	implemented bool
+	cadence     cadence
 }
 
 var features = []feature{
-	{"CPU", "usage and per-core clocks", true},
-	{"Memory", "memory, cache, and swap", true},
-	{"Thermal", "temperature, fan, voltage, and power sensors", false},
-	{"Storage", "filesystems, block devices, and I/O", false},
-	{"Network", "interfaces, addresses, and traffic", false},
-	{"GPU", "identity, utilization, clocks, and VRAM", false},
-	{"Display", "DRM connectors, EDID, and modes", false},
-	{"Hyprland", "logical monitor and workspace state", false},
-	{"Docker", "container state and resource usage", false},
+	{"CPU", "usage and per-core clocks", true, sampleCadence},
+	{"Memory", "memory, cache, and swap", true, sampleCadence},
+	{"Thermal", "temperature, fan, voltage, and power sensors", false, sampleCadence},
+	{"Storage", "filesystems, block devices, and I/O", false, discoveryCadence},
+	{"Network", "interfaces, addresses, and traffic", false, sampleCadence},
+	{"GPU", "identity, utilization, clocks, and VRAM", false, sampleCadence},
+	{"Display", "DRM connectors, EDID, and modes", false, eventCadence},
+	{"Hyprland", "logical monitor and workspace state", false, eventCadence},
+	{"Docker", "container state and resource usage", false, sampleCadence},
+}
+
+type featureRuntime struct {
+	lastGathered time.Time
+	lastSent     time.Time
+	nextUpdate   time.Time
+	metricCount  int
+	err          string
 }
 
 type viewMode uint8
@@ -65,13 +83,15 @@ type model struct {
 	ctx           context.Context
 	configuration config.Config
 	configPath    string
-	collect       collectFunc
+	collect       collectFeatureFunc
+	now           func() time.Time
 	mode          viewMode
 	cursor        int
 	offset        int
 	width         int
 	height        int
-	collecting    bool
+	collecting    map[string]bool
+	runtime       map[string]featureRuntime
 	snapshot      telemetry.Snapshot
 	hasSnapshot   bool
 	status        string
@@ -79,10 +99,13 @@ type model struct {
 }
 
 type snapshotMsg struct {
+	feature  string
 	snapshot telemetry.Snapshot
 }
 
-type refreshMsg struct{}
+type refreshMsg struct {
+	now time.Time
+}
 
 type saveMsg struct {
 	err error
@@ -90,7 +113,7 @@ type saveMsg struct {
 
 func Run(ctx context.Context, options Options) error {
 	if options.Collect == nil {
-		options.Collect = systemstate.Collect
+		options.Collect = systemstate.CollectFeature
 	}
 	program := tea.NewProgram(
 		newModel(ctx, options),
@@ -106,11 +129,17 @@ func Run(ctx context.Context, options Options) error {
 func newModel(ctx context.Context, options Options) model {
 	collector := options.Collect
 	if collector == nil {
-		collector = systemstate.Collect
+		collector = systemstate.CollectFeature
+	}
+	now := options.Now
+	if now == nil {
+		now = time.Now
 	}
 	return model{
 		ctx: ctx, configuration: options.Config, configPath: options.ConfigPath,
-		collect: collector, mode: settingsView,
+		collect: collector, now: now, mode: settingsView,
+		collecting: make(map[string]bool), runtime: make(map[string]featureRuntime),
+		snapshot: telemetry.NewSnapshot(options.Config.HostID, now(), nil, nil),
 	}
 }
 
@@ -130,17 +159,25 @@ func (current model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return current.updateMonitor(message)
 	case snapshotMsg:
-		current.snapshot = message.snapshot
+		current.mergeSnapshot(message.feature, message.snapshot)
 		current.hasSnapshot = true
-		current.collecting = false
+		current.collecting[message.feature] = false
+		runtime := current.runtime[message.feature]
+		runtime.lastGathered = message.snapshot.ObservedAt
+		runtime.metricCount = len(message.snapshot.Metrics)
+		runtime.err = diagnosticText(message.snapshot.Diagnostics)
+		if featureByName(message.feature).cadence != eventCadence {
+			runtime.nextUpdate = message.snapshot.ObservedAt.Add(current.intervalFor(featureByName(message.feature)))
+		}
+		current.runtime[message.feature] = runtime
 		current.statusErr = false
-		current.status = fmt.Sprintf("Updated %s", message.snapshot.ObservedAt.Local().Format("15:04:05"))
+		current.status = fmt.Sprintf("Gathered %s at %s", message.feature, message.snapshot.ObservedAt.Local().Format("15:04:05"))
 		current.clampOffset()
-		return current, refreshAfter(current.configuration.SampleInterval.Duration)
 	case refreshMsg:
-		if current.mode == monitorView && !current.collecting {
-			current.collecting = true
-			return current, current.collectCmd()
+		current.snapshot.ObservedAt = message.now
+		if current.mode == monitorView {
+			current, command := current.startCollections(message.now, false)
+			return current, tea.Batch(command, refreshAfter(time.Second))
 		}
 	case saveMsg:
 		current.statusErr = message.err != nil
@@ -177,9 +214,9 @@ func (current model) updateSettings(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "m":
 		current.mode = monitorView
 		current.offset = 0
-		current.collecting = true
-		current.status = "Collecting system state..."
-		return current, current.collectCmd()
+		current.status = "Starting live watch..."
+		current, command := current.startCollections(current.now(), true)
+		return current, tea.Batch(command, refreshAfter(time.Second))
 	}
 	return current, nil
 }
@@ -203,26 +240,23 @@ func (current model) updateMonitor(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		current.offset += current.visibleMetricRows()
 		current.clampOffset()
 	case "r":
-		if !current.collecting {
-			current.collecting = true
-			current.status = "Refreshing..."
-			return current, current.collectCmd()
-		}
+		current.status = "Refreshing enabled features..."
+		return current.startCollections(current.now(), true)
 	}
 	return current, nil
 }
 
-func (current model) collectCmd() tea.Cmd {
+func (current model) collectCmd(featureName string) tea.Cmd {
 	ctx := current.ctx
 	configuration := current.configuration
 	collect := current.collect
 	return func() tea.Msg {
-		return snapshotMsg{snapshot: collect(ctx, configuration, time.Now())}
+		return snapshotMsg{feature: featureName, snapshot: collect(ctx, configuration, featureName, current.now())}
 	}
 }
 
 func refreshAfter(interval time.Duration) tea.Cmd {
-	return tea.Tick(interval, func(time.Time) tea.Msg { return refreshMsg{} })
+	return tea.Tick(interval, func(now time.Time) tea.Msg { return refreshMsg{now: now} })
 }
 
 func (current model) View() string {
@@ -256,7 +290,7 @@ func (current model) settingsView() string {
 		view.WriteByte('\n')
 	}
 	view.WriteString("\n")
-	view.WriteString(mutedStyle.Render("Up/Down select  Space toggle  s save  m monitor  q quit"))
+	view.WriteString(mutedStyle.Render("Up/Down select  Space toggle  s save  m live watch  q quit"))
 	current.writeStatus(&view)
 	return view.String()
 }
@@ -264,13 +298,27 @@ func (current model) settingsView() string {
 func (current model) monitorView() string {
 	var view strings.Builder
 	view.WriteString(titleStyle.Render("pc-state-mqtt"))
-	view.WriteString(mutedStyle.Render("  Live monitor"))
-	if current.collecting {
+	view.WriteString(mutedStyle.Render("  Live watch"))
+	if current.anyCollecting() {
 		view.WriteString(mutedStyle.Render("  refreshing"))
 	}
+	view.WriteString("\n")
+	view.WriteString(mutedStyle.Render("MQTT delivery: inactive until daemon publishing is implemented; gathered values are not sent"))
 	view.WriteString("\n\n")
+	view.WriteString(mutedStyle.Render("Feature     State          Gathered             Sent       Next"))
+	view.WriteByte('\n')
+	for index, feature := range features {
+		if !current.featureEnabled(index) {
+			continue
+		}
+		view.WriteString(current.featureRuntimeRow(feature))
+		view.WriteByte('\n')
+	}
+	view.WriteString("\n")
+	view.WriteString(mutedStyle.Render("Data gathered / publish payload preview"))
+	view.WriteByte('\n')
 	if !current.hasSnapshot {
-		view.WriteString("Collecting system state...\n")
+		view.WriteString("Waiting for the first feature update...\n")
 	} else {
 		rows := current.metricRows()
 		end := min(len(rows), current.offset+current.visibleMetricRows())
@@ -278,16 +326,9 @@ func (current model) monitorView() string {
 			view.WriteString(row)
 			view.WriteByte('\n')
 		}
-		if len(current.snapshot.Diagnostics) > 0 {
-			view.WriteString("\n")
-			for _, diagnostic := range current.snapshot.Diagnostics {
-				view.WriteString(errorStyle.Render(diagnostic.Collector + ": " + diagnostic.Error))
-				view.WriteByte('\n')
-			}
-		}
 	}
 	view.WriteString("\n")
-	view.WriteString(mutedStyle.Render("Up/Down scroll  r refresh  Esc settings  q quit"))
+	view.WriteString(mutedStyle.Render("Up/Down scroll  r gather now  Esc settings  q quit"))
 	current.writeStatus(&view)
 	return view.String()
 }
@@ -325,7 +366,137 @@ func (current *model) clampOffset() {
 }
 
 func (current model) visibleMetricRows() int {
-	return max(4, current.height-8)
+	enabledFeatures := 0
+	for index := range features {
+		if current.featureEnabled(index) {
+			enabledFeatures++
+		}
+	}
+	return max(4, current.height-enabledFeatures-12)
+}
+
+func (current model) startCollections(now time.Time, force bool) (model, tea.Cmd) {
+	commands := make([]tea.Cmd, 0, len(features))
+	for index, feature := range features {
+		if !current.featureEnabled(index) {
+			current.removeFeatureMetrics(feature.name)
+			continue
+		}
+		if !feature.implemented || current.collecting[feature.name] {
+			continue
+		}
+		runtime := current.runtime[feature.name]
+		due := runtime.nextUpdate.IsZero() || !now.Before(runtime.nextUpdate)
+		if feature.cadence == eventCadence {
+			due = force && runtime.lastGathered.IsZero()
+		}
+		if force || due {
+			current.collecting[feature.name] = true
+			commands = append(commands, current.collectCmd(feature.name))
+		}
+	}
+	return current, tea.Batch(commands...)
+}
+
+func (current *model) mergeSnapshot(featureName string, snapshot telemetry.Snapshot) {
+	current.removeFeatureMetrics(featureName)
+	for path, envelope := range snapshot.Metrics {
+		current.snapshot.Metrics[path] = envelope
+	}
+	current.snapshot.ObservedAt = snapshot.ObservedAt
+}
+
+func (current *model) removeFeatureMetrics(featureName string) {
+	prefix := strings.ToLower(featureName) + "/"
+	for path := range current.snapshot.Metrics {
+		if strings.HasPrefix(path, prefix) {
+			delete(current.snapshot.Metrics, path)
+		}
+	}
+}
+
+func (current model) featureRuntimeRow(feature feature) string {
+	runtime := current.runtime[feature.name]
+	state := "waiting"
+	gathered := "-"
+	next := "due"
+	if !feature.implemented {
+		state = "planned"
+		next = current.cadenceLabel(feature)
+	} else if current.collecting[feature.name] {
+		state = "gathering"
+		next = "now"
+	} else if runtime.err != "" {
+		state = "error"
+	}
+	if !runtime.lastGathered.IsZero() {
+		gathered = fmt.Sprintf("%s / %d", runtime.lastGathered.Local().Format("15:04:05"), runtime.metricCount)
+	}
+	if feature.implemented && feature.cadence == eventCadence {
+		next = "event-driven"
+	} else if feature.implemented && !runtime.nextUpdate.IsZero() && !current.collecting[feature.name] {
+		next = formatCountdown(runtime.nextUpdate.Sub(current.snapshot.ObservedAt))
+	}
+	line := fmt.Sprintf("%-11s %-14s %-20s %-10s %s", feature.name, state, gathered, "not sent", next)
+	if runtime.err != "" {
+		line += "  " + runtime.err
+		return errorStyle.Render(line)
+	}
+	if feature.implemented {
+		return enabledStyle.Render(line)
+	}
+	return mutedStyle.Render(line)
+}
+
+func (current model) cadenceLabel(feature feature) string {
+	if feature.cadence == eventCadence {
+		return "event-driven"
+	}
+	return "every " + current.intervalFor(feature).String()
+}
+
+func (current model) intervalFor(feature feature) time.Duration {
+	if feature.cadence == discoveryCadence {
+		return current.configuration.DiscoveryInterval.Duration
+	}
+	return current.configuration.SampleInterval.Duration
+}
+
+func (current model) anyCollecting() bool {
+	for _, collecting := range current.collecting {
+		if collecting {
+			return true
+		}
+	}
+	return false
+}
+
+func featureByName(name string) feature {
+	for _, feature := range features {
+		if feature.name == name {
+			return feature
+		}
+	}
+	return feature{name: name, cadence: sampleCadence}
+}
+
+func diagnosticText(diagnostics []telemetry.Diagnostic) string {
+	parts := make([]string, 0, len(diagnostics))
+	for _, diagnostic := range diagnostics {
+		parts = append(parts, diagnostic.Error)
+	}
+	return strings.Join(parts, "; ")
+}
+
+func formatCountdown(remaining time.Duration) string {
+	if remaining <= 0 {
+		return "due"
+	}
+	seconds := int64((remaining + time.Second - 1) / time.Second)
+	if seconds < 60 {
+		return fmt.Sprintf("%ds", seconds)
+	}
+	return fmt.Sprintf("%dm%02ds", seconds/60, seconds%60)
 }
 
 func (current model) featureEnabled(index int) bool {
