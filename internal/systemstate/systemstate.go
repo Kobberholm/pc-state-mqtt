@@ -10,6 +10,9 @@ import (
 	"pc-state-mqtt/pkg/collector"
 	"pc-state-mqtt/pkg/collector/cpu"
 	"pc-state-mqtt/pkg/collector/memory"
+	"pc-state-mqtt/pkg/collector/network"
+	"pc-state-mqtt/pkg/collector/storage"
+	"pc-state-mqtt/pkg/collector/thermal"
 	"pc-state-mqtt/pkg/telemetry"
 )
 
@@ -37,12 +40,21 @@ func Gather(ctx context.Context, configuration config.Config, observedAt time.Ti
 }
 
 func enabledCollectors(configuration config.Config) []collector.Collector {
-	collectors := make([]collector.Collector, 0, 2)
+	collectors := make([]collector.Collector, 0, 5)
 	if configuration.Collectors.CPU {
 		collectors = append(collectors, cpuCollector(configuration))
 	}
 	if configuration.Collectors.Memory {
 		collectors = append(collectors, memoryCollector(configuration))
+	}
+	if configuration.Collectors.Thermal {
+		collectors = append(collectors, thermalCollector(configuration))
+	}
+	if configuration.Collectors.Storage {
+		collectors = append(collectors, storageCollector(configuration))
+	}
+	if configuration.Collectors.Network {
+		collectors = append(collectors, networkCollector(configuration))
 	}
 	return collectors
 }
@@ -61,6 +73,18 @@ func GatherFeature(ctx context.Context, configuration config.Config, name string
 	case "memory":
 		if configuration.Collectors.Memory {
 			selected = memoryCollector(configuration)
+		}
+	case "thermal":
+		if configuration.Collectors.Thermal {
+			selected = thermalCollector(configuration)
+		}
+	case "storage":
+		if configuration.Collectors.Storage {
+			selected = storageCollector(configuration)
+		}
+	case "network":
+		if configuration.Collectors.Network {
+			selected = networkCollector(configuration)
 		}
 	}
 	if selected == nil {
@@ -83,4 +107,16 @@ func memoryCollector(configuration config.Config) *memory.Collector {
 	collector := memory.New(configuration.ProcRoot)
 	collector.PerFieldOutput = configuration.Collectors.MemoryPerField
 	return collector
+}
+
+func thermalCollector(configuration config.Config) *thermal.Collector {
+	return thermal.New(configuration.SysRoot)
+}
+
+func storageCollector(configuration config.Config) *storage.Collector {
+	return storage.New(configuration.ProcRoot, configuration.SysRoot)
+}
+
+func networkCollector(configuration config.Config) *network.Collector {
+	return network.New(configuration.SysRoot)
 }

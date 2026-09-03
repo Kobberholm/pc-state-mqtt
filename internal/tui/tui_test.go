@@ -46,6 +46,9 @@ func TestMonitorUsesCurrentFeatureConfiguration(t *testing.T) {
 		Connect: nil,
 	})
 	current.configuration.Collectors.CPU = false
+	current.configuration.Collectors.Thermal = false
+	current.configuration.Collectors.Storage = false
+	current.configuration.Collectors.Network = false
 	current.mode = monitorView
 	monitor, command := current.startCollections(now, true)
 	if command == nil {
@@ -95,10 +98,10 @@ func TestMonitorRecordsAcknowledgedPublish(t *testing.T) {
 	}
 }
 
-func TestSettingsViewMarksPlannedFeatures(t *testing.T) {
+func TestSettingsViewMarksImplementedFeatures(t *testing.T) {
 	current := newModel(context.Background(), Options{Config: config.Defaults("host")})
 	view := current.View()
-	if !strings.Contains(view, "CPU") || !strings.Contains(view, "available") || !strings.Contains(view, "Thermal") || !strings.Contains(view, "planned") {
+	if !strings.Contains(view, "CPU") || !strings.Contains(view, "available") || !strings.Contains(view, "Thermal") || !strings.Contains(view, "Storage") || !strings.Contains(view, "Network") {
 		t.Fatalf("view = %q", view)
 	}
 }

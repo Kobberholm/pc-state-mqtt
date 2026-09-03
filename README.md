@@ -2,14 +2,14 @@
 
 `pc-state-mqtt` is a Linux service for collecting PC hardware and runtime state and publishing it to hierarchical MQTT topics. Future releases will accept a deliberately constrained command protocol from the broker.
 
-Version 0.1.0 establishes the telemetry schema, layered configuration, CLI, and broker-free one-shot output. The current development branch adds live CPU and memory collection plus MQTT daemon publishing. Remaining hardware collectors are implemented in the following planned feature releases.
+Version 0.2.0 provides core host telemetry, layered configuration, CLI, broker-free one-shot output, and MQTT/TUI publishing.
 
 ## Requirements
 
 - Linux
 - Go 1.25 or newer for building from source
 
-Most planned metrics use world-readable procfs and sysfs files. Docker telemetry requires access to the Docker socket. Some GPU sensors may require membership in the `video` or `render` group. Hyprland enrichment requires access to the active user session.
+Core telemetry reads world-readable `/proc` and `/sys` files and uses `statfs` for mounted filesystems; no elevated privileges are required on a standard Linux host. Docker telemetry requires access to the Docker socket. Some GPU sensors may require membership in the `video` or `render` group. Hyprland enrichment requires access to the active user session. If a sensor, mount, interface, or optional field is unavailable, collection continues and the snapshot reports a diagnostic where the source itself fails.
 
 ## Build and test
 
@@ -67,7 +67,7 @@ Use an explicit configuration and override selected values:
   --sample-interval 2s
 ```
 
-CPU and memory data are each published as one structured metric by default. Restore separate CPU topics with `--cpu-per-core`, `PC_STATE_MQTT_CPU_PER_CORE=true`, or `cpu_per_core = true` under `[collectors]`. Restore separate memory-property topics with `--memory-per-field`, `PC_STATE_MQTT_MEMORY_PER_FIELD=true`, or `memory_per_field = true`.
+CPU, memory, thermal, storage, and network data are each published as one structured metric by default. Restore separate CPU topics with `--cpu-per-core`, `PC_STATE_MQTT_CPU_PER_CORE=true`, or `cpu_per_core = true` under `[collectors]`. Restore separate memory-property topics with `--memory-per-field`, `PC_STATE_MQTT_MEMORY_PER_FIELD=true`, or `memory_per_field = true`.
 
 Run `./pc-state-mqtt --help` for all CLI options.
 
@@ -81,7 +81,7 @@ Open the feature settings and live monitoring interface with:
 make tui
 ```
 
-The settings view exposes every collector configured under `[collectors]`. CPU and memory are marked `available`; collectors scheduled for later implementation are marked `planned` and do not fabricate monitoring data.
+The settings view exposes every collector configured under `[collectors]`. CPU, memory, thermal, storage, and network are marked `available`; later collectors remain `planned` and do not fabricate monitoring data.
 
 - `Up`/`Down` or `j`/`k`: select a feature.
 - `Space` or `Enter`: enable or disable the selected feature for this session.
@@ -89,7 +89,7 @@ The settings view exposes every collector configured under `[collectors]`. CPU a
 - `m`: open the built-in live watch using the current feature selection.
 - `q`: quit.
 
-The live-watch view gives every enabled feature its own runtime row with collection state, last gather time, metric count, last send state, and a countdown to its next update. CPU and memory currently have independent sampled schedules using `sample_interval`. Storage-class discovery uses `discovery_interval`, while display and Hyprland are already modeled as future event-driven sources without artificial countdowns.
+The live-watch view gives every enabled feature its own runtime row with collection state, last gather time, metric count, last send state, and a countdown to its next update. CPU, memory, thermal, and network use `sample_interval`; storage discovery uses `discovery_interval`.
 
 Collected metric paths and values appear below the schedule as the exact publish-payload preview. The TUI connects to the configured broker asynchronously and publishes each feature update. Its `Sent` column changes from `not sent` to a timestamp only after every metric in that update receives its QoS 1 acknowledgement. Connection, collector, and publish errors remain visible without blocking unrelated features.
 
@@ -167,10 +167,19 @@ By default, the `pc-state/<host>/cpu` envelope groups aggregate and logical-CPU 
 ```json
 {
   "value": {
+    "identity": {
+      "model_name": "Example CPU",
+      "vendor_id": "GenuineIntel",
+      "architecture": "amd64",
+      "logical_cpu_count": 8,
+      "online_cpu_count": 8,
+      "online_cpus": ["0", "1", "2", "3", "4", "5", "6", "7"]
+    },
     "total": { "usage_percent": 18.75 },
     "cores": {
       "0": {
         "usage_percent": 12.5,
+        "online": true,
         "clock_current_mhz": 2400,
         "clock_min_mhz": 800,
         "clock_max_mhz": 4800
@@ -203,15 +212,18 @@ The default `pc-state/<host>/memory` envelope groups byte-normalized memory and 
 
 With per-field output enabled, the collector emits the previous paths such as `memory/total_bytes`, `memory/available_bytes`, and `memory/used_bytes`.
 
+The `thermal` object contains sorted `sensors` entries with `chip`, `name`, `type`, `value`, and explicit units (`C`, `RPM`, `V`, or `W`). Hwmon is preferred and thermal zones are a fallback.
+
+The `storage` object contains `mounts` (total, available, and used bytes), `blocks` (model, vendor, rotational state, sector size, and capacity), and cumulative `disk_io` counters. Pseudo-filesystems are excluded by default; no rates are invented.
+
+The `network` object contains sorted interfaces with kernel name/index, MAC, MTU, flags, IPv4/IPv6 addresses and prefix lengths, operational state, carrier/speed, and cumulative RX/TX byte, packet, error, and drop counters. Link-local addresses are retained.
+
 The schema version is `1.0`. Identity, metadata, and availability topics are retained at QoS 1. Frequently changing samples are unretained at QoS 1. Cumulative kernel counters are published as cumulative values so subscribers can derive rates over their preferred interval.
 
 ## Planned collectors
 
-- CPU utilization and logical-core clocks are available in development as one combined object by default or separate per-core topics when enabled; CPU identity and online state remain planned.
+- CPU identity, online state, utilization, and logical-core clocks are available in one combined object by default or separate per-core topics when enabled.
 - Memory, cache, and swap usage are available in development as one combined object by default or separate property topics when enabled.
-- Thermal, fan, voltage, and power sensors from hwmon and thermal zones.
-- Mounted filesystem usage, block-device identity, and disk I/O counters.
-- Network interfaces, addresses, link state, and traffic counters.
 - GPU identity, utilization, clocks, VRAM, temperature, fan, and power.
 - DRM connector and EDID monitor identity, modes, and optional Hyprland layout.
 - Docker container identity, state, health, CPU, memory, block I/O, and network state.

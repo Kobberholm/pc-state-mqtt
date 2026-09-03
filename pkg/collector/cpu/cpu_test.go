@@ -24,12 +24,20 @@ func TestReadSamples(t *testing.T) {
 	if err := os.WriteFile(path, []byte(contents), 0o600); err != nil {
 		t.Fatal(err)
 	}
+
 	samples, err := readSamples(path)
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if samples["cpu"].idle != 9 || samples["cpu0"].total != 155 {
 		t.Fatalf("samples = %#v", samples)
+	}
+}
+
+func TestParseCPURange(t *testing.T) {
+	if got := parseCPURange("0-3,8,10-11"); len(got) != 7 || got[0] != "0" || got[4] != "8" || got[6] != "11" {
+		t.Fatalf("range = %#v", got)
 	}
 }
 
@@ -48,6 +56,9 @@ func TestCollectorCombinesCPUsByDefault(t *testing.T) {
 	}
 	if state.Cores["0"].ClockCurrentMHz == nil || *state.Cores["0"].ClockCurrentMHz != 2400 {
 		t.Fatalf("core state = %#v", state.Cores["0"])
+	}
+	if state.Identity.ModelName != "Test CPU" || state.Identity.VendorID != "TestVendor" || state.Identity.LogicalCPUCount != 1 || state.Identity.OnlineCPUCount != 1 {
+		t.Fatalf("identity = %#v", state.Identity)
 	}
 }
 
@@ -76,6 +87,15 @@ func testCollector(t *testing.T) *Collector {
 	}
 	statPath := filepath.Join(procRoot, "stat")
 	if err := os.WriteFile(statPath, []byte("cpu 1 0 0 9 0\ncpu0 1 0 0 9 0\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(procRoot, "cpuinfo"), []byte("model name : Test CPU\nvendor_id : TestVendor\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(sysRoot, "devices/system/cpu"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(sysRoot, "devices/system/cpu/online"), []byte("0\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(sysRoot, "devices/system/cpu/cpu0/cpufreq/scaling_cur_freq"), []byte("2400000\n"), 0o600); err != nil {

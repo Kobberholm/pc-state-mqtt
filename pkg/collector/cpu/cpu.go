@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -29,12 +30,23 @@ type Collector struct {
 }
 
 type State struct {
-	Total CPU            `json:"total"`
-	Cores map[string]CPU `json:"cores"`
+	Identity CPUIdentity    `json:"identity"`
+	Total    CPU            `json:"total"`
+	Cores    map[string]CPU `json:"cores"`
+}
+
+type CPUIdentity struct {
+	ModelName       string   `json:"model_name,omitempty"`
+	VendorID        string   `json:"vendor_id,omitempty"`
+	Architecture    string   `json:"architecture,omitempty"`
+	LogicalCPUCount int      `json:"logical_cpu_count"`
+	OnlineCPUCount  int      `json:"online_cpu_count"`
+	OnlineCPUs      []string `json:"online_cpus,omitempty"`
 }
 
 type CPU struct {
 	UsagePercent    float64  `json:"usage_percent"`
+	Online          *bool    `json:"online,omitempty"`
 	ClockCurrentMHz *float64 `json:"clock_current_mhz,omitempty"`
 	ClockMinMHz     *float64 `json:"clock_min_mhz,omitempty"`
 	ClockMaxMHz     *float64 `json:"clock_max_mhz,omitempty"`
@@ -65,6 +77,8 @@ func (collector *Collector) Collect(ctx context.Context) ([]telemetry.Metric, er
 	}
 
 	observedAt := collector.Now().UTC()
+	identity := readIdentity(filepath.Join(collector.ProcRoot, "cpuinfo"))
+	online := readOnline(collector.SysRoot, after)
 	names := make([]string, 0, len(after))
 	for name := range after {
 		names = append(names, name)
@@ -72,12 +86,20 @@ func (collector *Collector) Collect(ctx context.Context) ([]telemetry.Metric, er
 	sort.Strings(names)
 
 	metrics := make([]telemetry.Metric, 0, len(names)*2)
-	state := State{Cores: make(map[string]CPU, max(0, len(names)-1))}
+	state := State{Cores: make(map[string]CPU, max(0, len(names)-1)), Identity: identity}
+	for _, name := range names {
+		if name != "cpu" {
+			state.Identity.LogicalCPUCount++
+		}
+	}
+	state.Identity.OnlineCPUCount = len(sortedKeys(online))
+	state.Identity.OnlineCPUs = append([]string(nil), sortedKeys(online)...)
 	for _, name := range names {
 		previous, exists := before[name]
 		if !exists {
 			continue
 		}
+
 		usage, ok := utilization(previous, after[name])
 		if !ok {
 			continue
@@ -91,6 +113,9 @@ func (collector *Collector) Collect(ctx context.Context) ([]telemetry.Metric, er
 			state.Total = cpuState
 		} else {
 			cpuState = collector.clockState(id, cpuState)
+			if isOnline, exists := online[id]; exists {
+				cpuState.Online = &isOnline
+			}
 			state.Cores[id] = cpuState
 		}
 		if collector.PerCoreOutput {
@@ -120,7 +145,7 @@ func readSamples(path string) (map[string]sample, error) {
 	scanner := bufio.NewScanner(file)
 	for scanner.Scan() {
 		fields := strings.Fields(scanner.Text())
-		if len(fields) < 5 || (fields[0] != "cpu" && !strings.HasPrefix(fields[0], "cpu")) {
+		if len(fields) < 5 || !cpuRowName(fields[0]) {
 			if len(samples) > 0 {
 				break
 			}
@@ -130,16 +155,32 @@ func readSamples(path string) (map[string]sample, error) {
 		for _, field := range fields[1:] {
 			value, err := strconv.ParseUint(field, 10, 64)
 			if err != nil {
-				return nil, fmt.Errorf("parse %s statistic %q: %w", fields[0], field, err)
+				values = nil
+				break
 			}
 			values = append(values, value)
 		}
+		if len(values) < 4 {
+			continue
+		}
 		var total uint64
+		overflow := false
 		for _, value := range values {
+			if ^uint64(0)-total < value {
+				overflow = true
+				break
+			}
 			total += value
 		}
+		if overflow {
+			continue
+		}
+
 		idle := values[3]
 		if len(values) > 4 {
+			if ^uint64(0)-idle < values[4] {
+				continue
+			}
 			idle += values[4]
 		}
 		samples[fields[0]] = sample{idle: idle, total: total}
@@ -221,4 +262,126 @@ func wait(ctx context.Context, duration time.Duration) error {
 	case <-timer.C:
 		return nil
 	}
+}
+
+func sortedKeys(values map[string]bool) []string {
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		if values[key] {
+			keys = append(keys, key)
+		}
+	}
+	sort.Slice(keys, func(i, j int) bool {
+		left, _ := strconv.Atoi(keys[i])
+		right, _ := strconv.Atoi(keys[j])
+		return left < right
+	})
+	return keys
+}
+
+func cpuRowName(name string) bool {
+	if name == "cpu" {
+		return true
+	}
+	if !strings.HasPrefix(name, "cpu") || len(name) == 3 {
+		return false
+	}
+	_, err := strconv.Atoi(name[3:])
+	return err == nil
+}
+
+func readIdentity(path string) CPUIdentity {
+	identity := CPUIdentity{Architecture: runtime.GOARCH}
+	file, err := os.Open(path)
+	if err != nil {
+		return identity
+	}
+	defer file.Close()
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		parts := strings.SplitN(scanner.Text(), ":", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		key, value := strings.TrimSpace(parts[0]), strings.TrimSpace(parts[1])
+		switch key {
+		case "model name", "Processor":
+			if identity.ModelName == "" {
+				identity.ModelName = value
+			}
+		case "vendor_id", "CPU implementer":
+			if identity.VendorID == "" {
+				identity.VendorID = value
+			}
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return identity
+	}
+	return identity
+}
+
+func readOnline(sysRoot string, samples map[string]sample) map[string]bool {
+	online := make(map[string]bool)
+	for name := range samples {
+		if name != "cpu" {
+			online[strings.TrimPrefix(name, "cpu")] = false
+		}
+	}
+	data, err := os.ReadFile(filepath.Join(sysRoot, "devices/system/cpu/online"))
+	if err == nil {
+		for _, id := range parseCPURange(strings.TrimSpace(string(data))) {
+			online[id] = true
+		}
+		if len(sortedKeys(online)) > 0 {
+			return online
+		}
+	}
+	for name := range samples {
+		if name == "cpu" {
+			continue
+		}
+		id := strings.TrimPrefix(name, "cpu")
+		value := true
+		if contents, readErr := os.ReadFile(filepath.Join(sysRoot, "devices/system/cpu", name, "online")); readErr == nil {
+			value = strings.TrimSpace(string(contents)) != "0"
+		}
+		online[id] = value
+	}
+	return online
+}
+
+func parseCPURange(value string) []string {
+	set := make(map[int]bool)
+	for _, part := range strings.Split(value, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		bounds := strings.SplitN(part, "-", 2)
+		start, err := strconv.Atoi(strings.TrimSpace(bounds[0]))
+		if err != nil || start < 0 {
+			continue
+		}
+		end := start
+		if len(bounds) == 2 {
+			end, err = strconv.Atoi(strings.TrimSpace(bounds[1]))
+			if err != nil || end < start {
+				continue
+			}
+		}
+		for current := start; current <= end; current++ {
+			set[current] = true
+		}
+	}
+	ids := make([]int, 0, len(set))
+	for id := range set {
+		ids = append(ids, id)
+	}
+	sort.Ints(ids)
+	result := make([]string, len(ids))
+	for index, id := range ids {
+		result[index] = strconv.Itoa(id)
+	}
+	return result
 }

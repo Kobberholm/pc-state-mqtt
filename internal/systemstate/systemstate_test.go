@@ -42,6 +42,9 @@ func TestGatherPreservesMetricRetention(t *testing.T) {
 	configuration := config.Defaults("host")
 	configuration.Collectors.CPU = false
 	configuration.Collectors.Memory = false
+	configuration.Collectors.Thermal = false
+	configuration.Collectors.Storage = false
+	configuration.Collectors.Network = false
 	state := Gather(context.Background(), configuration, time.Unix(1, 0))
 	if len(state.Metrics) != 2 {
 		t.Fatalf("metrics = %#v", state.Metrics)
@@ -66,5 +69,24 @@ func TestMemoryCollectorUsesConfiguredOutputMode(t *testing.T) {
 	configuration.Collectors.MemoryPerField = true
 	if !memoryCollector(configuration).PerFieldOutput {
 		t.Fatal("memory per-field output was not enabled")
+	}
+}
+
+func TestCoreCollectorsAreRegistered(t *testing.T) {
+	configuration := config.Defaults("host")
+	registered := enabledCollectors(configuration)
+	if len(registered) != 5 {
+		t.Fatalf("collectors = %#v", registered)
+	}
+	for _, name := range []string{"cpu", "memory", "thermal", "storage", "network"} {
+		found := false
+		for _, current := range registered {
+			if current.Name() == name {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("collector %q was not registered", name)
+		}
 	}
 }

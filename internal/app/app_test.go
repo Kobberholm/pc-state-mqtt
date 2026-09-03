@@ -68,6 +68,9 @@ func TestWriteSnapshotKeepsSuccessfulCollectorData(t *testing.T) {
 	configuration.ProcRoot = procRoot
 	configuration.Collectors.CPU = true
 	configuration.Collectors.Memory = true
+	configuration.Collectors.Thermal = false
+	configuration.Collectors.Storage = false
+	configuration.Collectors.Network = false
 	var output bytes.Buffer
 	if err := writeSnapshot(context.Background(), &output, configuration, time.Unix(1, 0)); err != nil {
 		t.Fatal(err)
