@@ -18,17 +18,20 @@ import (
 )
 
 var pseudoFilesystems = map[string]bool{
-	"autofs": true, "cgroup": true, "cgroup2": true, "configfs": true,
-	"debugfs": true, "devpts": true, "devtmpfs": true, "efivarfs": true,
-	"fusectl": true, "hugetlbfs": true, "mqueue": true, "proc": true,
-	"pstore": true, "ramfs": true, "securityfs": true, "sysfs": true,
-	"tmpfs": true, "tracefs": true,
+	"autofs": true, "bdev": true, "binfmt_misc": true, "bpf": true,
+	"cgroup": true, "cgroup2": true, "configfs": true, "debugfs": true,
+	"devpts": true, "devtmpfs": true, "efivarfs": true, "fusectl": true,
+	"hugetlbfs": true, "mqueue": true, "nsfs": true, "proc": true,
+	"pstore": true, "ramfs": true, "rootfs": true, "rpc_pipefs": true,
+	"securityfs": true, "selinuxfs": true, "sysfs": true, "tmpfs": true,
+	"tracefs": true,
 }
 
 type Collector struct {
 	ProcRoot string
 	SysRoot  string
 	Now      func() time.Time
+	Statfs   func(string, *unix.Statfs_t) error
 }
 
 type State struct {
@@ -75,7 +78,7 @@ type mountEntry struct {
 }
 
 func New(procRoot, sysRoot string) *Collector {
-	return &Collector{ProcRoot: procRoot, SysRoot: sysRoot, Now: time.Now}
+	return &Collector{ProcRoot: procRoot, SysRoot: sysRoot, Now: time.Now, Statfs: unix.Statfs}
 }
 func (collector *Collector) Name() string { return "storage" }
 
@@ -104,10 +107,17 @@ func (collector *Collector) readMounts() ([]Mount, error) {
 	}
 	mounts := make([]Mount, 0, len(entries))
 	var failures []error
+	statfs := collector.Statfs
+	if statfs == nil {
+		statfs = unix.Statfs
+	}
 	for _, entry := range entries {
 		var stat unix.Statfs_t
-		if err := unix.Statfs(entry.Path, &stat); err != nil {
+		if err := statfs(entry.Path, &stat); err != nil {
 			if os.IsNotExist(err) {
+				continue
+			}
+			if os.IsPermission(err) || errors.Is(err, unix.EACCES) || errors.Is(err, unix.EPERM) {
 				continue
 			}
 			failures = append(failures, fmt.Errorf("statfs %s: %w", entry.Path, err))
@@ -143,17 +153,30 @@ func parseMountInfo(path string) ([]mountEntry, error) {
 			continue
 		}
 		left, right := strings.Fields(parts[0]), strings.Fields(parts[1])
-		if len(left) < 6 || len(right) < 2 || pseudoFilesystems[right[0]] {
+		if len(left) < 6 || len(right) < 2 {
 			continue
 		}
-		entries = append(entries, mountEntry{
-			Path: unescapeMountPath(left[4]), Filesystem: right[0], Source: unescapeMountPath(right[1]),
-		})
+		entry := mountEntry{Path: unescapeMountPath(left[4]), Filesystem: right[0], Source: unescapeMountPath(right[1])}
+		if skipMount(entry) {
+			continue
+		}
+		entries = append(entries, entry)
 	}
 	if err := scanner.Err(); err != nil {
 		return nil, fmt.Errorf("scan mountinfo: %w", err)
 	}
 	return entries, nil
+}
+
+func skipMount(entry mountEntry) bool {
+	filesystem := strings.ToLower(entry.Filesystem)
+	if pseudoFilesystems[filesystem] || filesystem == "overlay" || filesystem == "fuse-overlayfs" {
+		return true
+	}
+	// Docker's network namespaces are mounted as nsfs below one of these paths.
+	path := filepath.Clean(entry.Path)
+	return strings.HasPrefix(path, "/run/docker/netns/") ||
+		strings.HasPrefix(path, "/var/run/docker/netns/")
 }
 
 func unescapeMountPath(value string) string {

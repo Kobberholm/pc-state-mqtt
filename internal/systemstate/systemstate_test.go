@@ -42,6 +42,9 @@ func TestGatherPreservesMetricRetention(t *testing.T) {
 	configuration := config.Defaults("host")
 	configuration.Collectors.CPU = false
 	configuration.Collectors.Memory = false
+	configuration.Collectors.Thermal = false
+	configuration.Collectors.Storage = false
+	configuration.Collectors.Network = false
 	state := Gather(context.Background(), configuration, time.Unix(1, 0))
 	if len(state.Metrics) != 2 {
 		t.Fatalf("metrics = %#v", state.Metrics)

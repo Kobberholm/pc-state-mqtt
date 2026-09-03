@@ -46,6 +46,9 @@ func TestMonitorUsesCurrentFeatureConfiguration(t *testing.T) {
 		Connect: nil,
 	})
 	current.configuration.Collectors.CPU = false
+	current.configuration.Collectors.Thermal = false
+	current.configuration.Collectors.Storage = false
+	current.configuration.Collectors.Network = false
 	current.mode = monitorView
 	monitor, command := current.startCollections(now, true)
 	if command == nil {

@@ -54,14 +54,14 @@ type Address struct {
 }
 
 func New(sysRoot string) *Collector {
-	return &Collector{SysRoot: sysRoot, Now: time.Now, Interfaces: net.Interfaces, Addresses: func(iface net.Interface) ([]net.Addr, error) { return iface.Addrs() }}
+	return &Collector{SysRoot: sysRoot, Now: time.Now, Interfaces: netlinkInterfaces, Addresses: netlinkAddresses}
 }
 func (collector *Collector) Name() string { return "network" }
 
 func (collector *Collector) Collect(context.Context) ([]telemetry.Metric, error) {
 	discover := collector.Interfaces
 	if discover == nil {
-		discover = net.Interfaces
+		discover = netlinkInterfaces
 	}
 	interfaces, err := discover()
 	if err != nil {
@@ -69,7 +69,7 @@ func (collector *Collector) Collect(context.Context) ([]telemetry.Metric, error)
 	}
 	addresses := collector.Addresses
 	if addresses == nil {
-		addresses = func(iface net.Interface) ([]net.Addr, error) { return iface.Addrs() }
+		addresses = netlinkAddresses
 	}
 	state := State{Interfaces: make([]InterfaceState, 0, len(interfaces))}
 	for _, iface := range interfaces {
