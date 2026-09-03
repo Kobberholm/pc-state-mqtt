@@ -315,6 +315,9 @@ func readIdentity(path string) CPUIdentity {
 			}
 		}
 	}
+	if err := scanner.Err(); err != nil {
+		return identity
+	}
 	return identity
 }
 
