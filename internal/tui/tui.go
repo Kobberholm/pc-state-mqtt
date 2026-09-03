@@ -67,9 +67,9 @@ type feature struct {
 var features = []feature{
 	{"CPU", "usage and per-core clocks", true, sampleCadence},
 	{"Memory", "memory, cache, and swap", true, sampleCadence},
-	{"Thermal", "temperature, fan, voltage, and power sensors", false, sampleCadence},
-	{"Storage", "filesystems, block devices, and I/O", false, discoveryCadence},
-	{"Network", "interfaces, addresses, and traffic", false, sampleCadence},
+	{"Thermal", "temperature, fan, voltage, and power sensors", true, sampleCadence},
+	{"Storage", "filesystems, block devices, and I/O", true, discoveryCadence},
+	{"Network", "interfaces, addresses, and traffic", true, sampleCadence},
 	{"GPU", "identity, utilization, clocks, and VRAM", false, sampleCadence},
 	{"Display", "DRM connectors, EDID, and modes", false, eventCadence},
 	{"Hyprland", "logical monitor and workspace state", false, eventCadence},

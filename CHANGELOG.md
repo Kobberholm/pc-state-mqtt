@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Collect CPU identity and online state, thermal sensors, mounted filesystem and block-device telemetry, and network interface counters.
+- Register the Phase 2 collectors in one-shot output and the TUI, with deterministic structured output and isolated optional-source failures.
+
+## 0.2.0 - 2026-09-03
+
+- Complete core host telemetry for CPU identity/online state, thermal, storage, and network data.
+
 - Collect aggregate and per-logical-CPU utilization from procfs with optional per-core clock data from sysfs, grouped into one JSON object by default with configurable separate per-core topics.
 - Collect memory, cache, buffers, and swap values from procfs with byte-normalized output, grouped into one JSON object by default with configurable separate property topics.
 - Run collectors concurrently with independent timeouts, deterministic output, and partial-failure diagnostics.

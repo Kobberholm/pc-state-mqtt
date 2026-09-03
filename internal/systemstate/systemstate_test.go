@@ -68,3 +68,22 @@ func TestMemoryCollectorUsesConfiguredOutputMode(t *testing.T) {
 		t.Fatal("memory per-field output was not enabled")
 	}
 }
+
+func TestCoreCollectorsAreRegistered(t *testing.T) {
+	configuration := config.Defaults("host")
+	registered := enabledCollectors(configuration)
+	if len(registered) != 5 {
+		t.Fatalf("collectors = %#v", registered)
+	}
+	for _, name := range []string{"cpu", "memory", "thermal", "storage", "network"} {
+		found := false
+		for _, current := range registered {
+			if current.Name() == name {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("collector %q was not registered", name)
+		}
+	}
+}
