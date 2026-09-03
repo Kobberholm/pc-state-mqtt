@@ -24,7 +24,7 @@ Before following any handoff, run `git status --short --branch`. Preserve a dirt
 6. Add Makefile targets `build`, `run`, `test`, `test-integration`, `fmt`, `vet`, `check`, `install`, and later systemd installation helpers. Add `config.example.toml`, `README.md`, and `CHANGELOG.md`; expose version `0.1.0` from one constant and `--version`.
 7. Add tests for topic escaping, JSON schema, CLI behavior, configuration precedence, TLS and duration validation, secret redaction, and cancellation. Run `make check`, update documentation and changelog, commit the feature branch, and merge it into `main`.
 
-## Phase 2: Core host collectors (`feature/core-telemetry`, version `0.2.0`)
+## Phase 2: Core host collectors (`copilot/verify-phase-1-baseline`, version `0.2.0`, completed)
 
 1. Build a concurrent aggregate collector with per-collector timeouts, deterministic output ordering, injected clock/filesystem roots, and isolated errors. Individual collector failures appear in diagnostics but do not suppress successful domains.
 2. Implement CPU collection from `/proc/stat` and sysfs: aggregate/per-logical-CPU utilization, identity, online state, model/vendor, and current/min/max clocks. Handle counter resets and missing cpufreq data.
@@ -33,7 +33,7 @@ Before following any handoff, run `git status --short --branch`. Preserve a dirt
 5. Implement storage from `/proc/self/mountinfo`, `statfs`, `/sys/class/block`, and `/proc/diskstats`: real mounts, filesystem usage, block identity/capacity, and cumulative I/O counters. Exclude pseudo-filesystems by default.
 6. Implement network collection with Go network APIs and `/sys/class/net`: interface identity, MAC, MTU, addresses, link state/speed, and cumulative byte/packet/error/drop counters.
 7. Add fixture-driven parser and sysfs tests for malformed data, hot-remove races, resets, duplicate labels, escaped mount paths, IPv6, and permission failures.
-8. Update README and changelog, bump to `0.2.0`, run `make check` and a host `--once` smoke test, then merge into `main`.
+8. Update README and changelog, bump to `0.2.0`, run `make check` and host/MQTT smoke tests, then merge into `main`. Completed on 2026-09-03; the branch passed unit, build, one-shot, and retained availability validation and is ready to merge.
 
 ## Phase 3: GPU and display state (`feature/gpu-display-telemetry`, version `0.3.0`)
 

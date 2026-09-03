@@ -220,10 +220,11 @@ The `network` object contains sorted interfaces with kernel name/index, MAC, MTU
 
 The schema version is `1.0`. Identity, metadata, and availability topics are retained at QoS 1. Frequently changing samples are unretained at QoS 1. Cumulative kernel counters are published as cumulative values so subscribers can derive rates over their preferred interval.
 
-## Planned collectors
+## Available and planned collectors
 
 - CPU identity, online state, utilization, and logical-core clocks are available in one combined object by default or separate per-core topics when enabled.
 - Memory, cache, and swap usage are available in development as one combined object by default or separate property topics when enabled.
+- Thermal, storage, and network telemetry are available as structured objects with the fields described above.
 - GPU identity, utilization, clocks, VRAM, temperature, fan, and power.
 - DRM connector and EDID monitor identity, modes, and optional Hyprland layout.
 - Docker container identity, state, health, CPU, memory, block I/O, and network state.

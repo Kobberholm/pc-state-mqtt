@@ -1,8 +1,8 @@
-# Phase 2 Handoff: Core Host Telemetry
+# Phase 2: Core Host Telemetry (Completed)
 
 ## Outcome
 
-Complete version `0.2.0` on branch `feature/core-telemetry`. Collect CPU, memory, thermal, storage, and network state with deterministic output and isolated failures. Finish and validate the MQTT/TUI work already present on this branch, update documentation, bump the version once, commit, and merge into `main` only when every acceptance criterion passes.
+Version `0.2.0` is complete on branch `copilot/verify-phase-1-baseline`. CPU, memory, thermal, storage, and network state are collected with deterministic output and isolated failures. The MQTT/TUI work present on the branch is validated, documented, and ready to merge into `main`.
 
 ## Start here
 
@@ -14,14 +14,13 @@ git --no-pager log --oneline --decorate -12
 make check
 ```
 
-Important state as of 2026-09-03:
+Completion evidence as of 2026-09-03:
 
-- Branch `feature/core-telemetry` exists and is the active branch.
-- HEAD is `489e8e1` (`feat: add scheduled TUI live watch`).
-- The worktree contains substantial uncommitted MQTT, CPU-shape, and memory-shape changes. These are intentional. Do not reset, checkout, stash, or rewrite them away.
-- `internal/version/version.go` is still `0.1.0`. Do not bump it until all Phase 2 work is complete.
-- CPU and memory collectors exist. Thermal, storage, and network collectors do not yet exist.
-- MQTT daemon publishing and TUI delivery acknowledgement code exist uncommitted even though the original master plan assigned MQTT lifecycle to Phase 4. Preserve and finish that code; do not implement a second MQTT client.
+- `make check` passes formatting, vet, all unit tests, and both builds.
+- Default and compatibility `--once` snapshots succeed without diagnostics.
+- The local Mosquitto broker retains `online` after connection and `offline` after SIGINT shutdown.
+- CPU, memory, thermal, storage, and network collectors are implemented, registered, fixture-tested, documented, and exposed in the TUI.
+- Version `0.2.0` is set in `internal/version/version.go`; only the merge into `main` remains.
 
 ## Existing implementation to preserve
 
